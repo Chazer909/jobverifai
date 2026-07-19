@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>JobVerifAI — Job Offer Verification</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='13' fill='%230A2540'/%3E%3Cpath d='M24 8.5 L37 13.2 V24.5 C37 32.6 31.2 37.8 24 40 C16.8 37.8 11 32.6 11 24.5 V13.2 Z' fill='%2312AEC4'/%3E%3Cpath d='M17.5 24 L22 28.5 L31 18.5' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <style>
   :root{
     --bg:#F4F9FB;
@@ -686,8 +685,23 @@ function legacyCopy(text, done) {
   try { document.execCommand("copy"); } catch (e) {}
   document.body.removeChild(ta); done();
 }
-function drawQr(el) {
-  if (!el || el.dataset.done) return;
+/* QR library is loaded lazily only when the QR modal opens, so it never
+   blocks the initial page render on slow or restricted networks. */
+let qrLoadPromise = null;
+function loadQrLib() {
+  if (window.qrcode) return Promise.resolve(window.qrcode);
+  if (qrLoadPromise) return qrLoadPromise;
+  qrLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js";
+    s.onload = () => resolve(window.qrcode);
+    s.onerror = () => reject(new Error("qr-load-failed"));
+    document.head.appendChild(s);
+  });
+  return qrLoadPromise;
+}
+function paintQr(el) {
+  if (!el || el.dataset.done || !window.qrcode) return;
   try {
     const q = window.qrcode(0, "M"); q.addData(window.location.href); q.make();
     el.innerHTML = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
@@ -695,6 +709,11 @@ function drawQr(el) {
     if (svg && svg.tagName && svg.tagName.toLowerCase() === "svg") { svg.style.width = "100%"; svg.style.height = "100%"; svg.style.display = "block"; }
     el.dataset.done = "1";
   } catch (e) { el.textContent = window.location.href; }
+}
+function drawQr(el) {
+  if (!el || el.dataset.done) return;
+  el.textContent = window.location.href;
+  loadQrLib().then(() => paintQr(el)).catch(() => { el.textContent = window.location.href; });
 }
 
 /* ================= render ================= */
