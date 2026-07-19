@@ -1,0 +1,7 @@
+{
+  "name": "jobverifai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JobVerifAI - Lao job-offer verification tool (Check, Practice, Learn); text, image, voice/video, and link input, including TikTok",
+  "engines": { "node": ">=18" }
+}

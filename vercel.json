@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "api/check-link.js": { "maxDuration": 10 },
+    "api/transcribe.js": { "maxDuration": 30 }
+  }
+}
