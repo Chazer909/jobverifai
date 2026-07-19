@@ -1,1 +1,1183 @@
-placeholder
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JobVerifAI — Job Offer Verification</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='13' fill='%230A2540'/%3E%3Cpath d='M24 8.5 L37 13.2 V24.5 C37 32.6 31.2 37.8 24 40 C16.8 37.8 11 32.6 11 24.5 V13.2 Z' fill='%2312AEC4'/%3E%3Cpath d='M17.5 24 L22 28.5 L31 18.5' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#F4F9FB;
+    --navy:#0A2540;
+    --navy-2:#0E3352;
+    --aqua:#12AEC4;
+    --aqua-600:#0E97AB;
+    --aqua-700:#0B7E90;
+    --aqua-tint:#E7F6F9;
+    --aqua-line:#BFE4EB;
+    --chip:#EAF3F6;
+    --field:#FBFDFE;
+    --line:#DCE6EB;
+    --ink:#3A4A57;
+    --ink-strong:#0A2540;
+    --muted:#5E7482;
+    --muted-2:#8598A4;
+    --warn-bg:#FCF3E1;
+    --warn-line:#EBD3A6;
+    --warn-ink:#8A5A10;
+    --card-shadow:0 1px 3px rgba(10,37,64,0.07);
+  }
+  html,body{margin:0;padding:0;background:var(--bg);}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  button,textarea,input{font-family:inherit;}
+  textarea::placeholder,input::placeholder{color:#a4b3bd;}
+  a{color:inherit;}
+  @keyframes jv-in{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+  @keyframes jv-pop{0%{opacity:0;transform:scale(0.9);}60%{transform:scale(1.03);}100%{opacity:1;transform:scale(1);}}
+  @keyframes jv-dot{0%,80%,100%{opacity:.25;}40%{opacity:1;}}
+  @keyframes jv-spin{to{transform:rotate(360deg);}}
+  body{
+    color:var(--ink);
+    font-family:'Noto Sans Lao','Noto Sans Lao UI','Phetsarath OT','Saysettha OT',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  .wrap{min-height:100dvh;background:var(--bg);display:flex;flex-direction:column;align-items:center;padding:0 0 48px 0;}
+  .inner{width:100%;max-width:560px;padding:22px 18px 0 18px;display:flex;flex-direction:column;gap:16px;}
+  textarea,input[type=url],input[type=text]{outline:none;}
+  textarea:focus,input[type=url]:focus,input[type=text]:focus{border-color:var(--aqua) !important;box-shadow:0 0 0 3px var(--aqua-tint);}
+  .tap:active{transform:scale(0.98);}
+  .tap-lg:active{transform:scale(0.99);}
+  .spin{animation:jv-spin 0.9s linear infinite;}
+  .grid2{display:grid;grid-template-columns:1fr;gap:12px;}
+  @media (min-width:680px){
+    .inner{max-width:640px;padding-top:30px;gap:18px;}
+    .grid2{grid-template-columns:1fr 1fr;}
+  }
+  @media (min-width:1024px){ .inner{max-width:700px;} }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ================= state ================= */
+const state = {
+  section: "home",              // "home" | "check" | "practice" | "learn"
+  mode: "text",
+  screen: "input",              // "input" | "result" | "detail"
+  lang: "lo",                   // "lo" | "en" -- pure single-language
+  text: "",
+  analyzing: false,
+  result: null,
+  qrOpen: false,
+  copied: false,
+  helpOpen: false,
+  imgDataUrl: null,
+  imgOcrRunning: false,
+  imgOcrProgress: 0,
+  imgOcrText: "",
+  imgOcrError: "",
+  linkUrl: "",
+  linkFetching: false,
+  linkError: "",
+  linkFetchedFrom: "",
+  voiceMode: "record",
+  voiceRecording: false,
+  voiceSeconds: 0,
+  voiceBlobUrl: null,
+  voiceBlob: null,
+  voiceKind: "",
+  voiceTranscribing: false,
+  voiceText: "",
+  voiceError: "",
+  // practice (choice-based simulator)
+  practiceStarted: false,
+  practiceStep: 0,
+  practiceEnded: null,          // null | "good" | "bad"
+  practiceResult: null,
+  practiceFeedback: null,       // {lo,en} transient reaction after a risky choice
+  // learn
+  learnView: "main",            // "main" | "wall"
+  voiceJustShared: false,
+  // learn community voices (in-memory demo)
+  voiceForm: { name: "", body: "" },
+  voices: []
+};
+let copyTimer = null;
+let tesseractLoadPromise = null;
+let mediaRecorder = null;
+let recordTimer = null;
+let mediaStream = null;
+const VOICE_MAX_SECONDS = 60;
+/* This build is hosted on a static host with no /api functions.
+   Link and Voice/Video need a server, so they are shown as
+   "full version only" notices instead of broken buttons. */
+const STATIC_ONLY = true;
+
+/* ================= language helper ================= */
+function L(o) { if (o == null) return ""; return o[state.lang] != null ? o[state.lang] : (o.en || ""); }
+
+/* ================= UI dictionary ================= */
+const D = {
+  appTagline:   { lo: "ກວດສອບຂໍ້ສະເໜີວຽກ ກ່ອນຕັດສິນໃຈເດີນທາງ", en: "Verify a job offer before you decide to travel" },
+  navHome:      { lo: "ໜ້າຫຼັກ", en: "Home" },
+  navCheck:     { lo: "ກວດສອບ", en: "Check" },
+  navPractice:  { lo: "ຝຶກຮັບມື", en: "Practice" },
+  navLearn:     { lo: "ຮຽນຮູ້", en: "Learn" },
+
+  /* call center */
+  callTitle:    { lo: "ສາຍດ່ວນຊ່ວຍເຫຼືອ 24 ຊົ່ວໂມງ", en: "24-hour help hotline" },
+  callSub:      { lo: "ສະຫະພັນແມ່ຍິງລາວ · ຟຣີ ແລະ ເປັນຄວາມລັບ", en: "Lao Women's Union · free and confidential" },
+  callNow:      { lo: "ໂທດຽວນີ້", en: "Call now" },
+  callShort:    { lo: "ຕ້ອງການຄວາມຊ່ວຍເຫຼືອດ່ວນ?", en: "Need urgent help?" },
+
+  /* home */
+  homeHeroTitle:{ lo: "ວຽກປອມ ຄືປະຕູສູ່ການຄ້າມະນຸດ", en: "Fake jobs are a doorway to human trafficking" },
+  homeHeroBody: { lo: "ຫຼາຍຄົນຖືກຫຼອກດ້ວຍຂໍ້ສະເໜີວຽກທີ່ດີເກີນຈິງ ແລ້ວຖືກບັງຄັບໃຫ້ເຮັດວຽກໃນສູນຫຼອກລວງ. ການກວດສອບກ່ອນເດີນທາງ ຊ່ວຍປົກປ້ອງເຈົ້າໄດ້.", en: "Many people are lured by offers that look too good, then forced to work in scam compounds. Checking before you travel helps protect you." },
+  homeStat1:    { lo: "3 ໃນ 4 ຖືກຊັກຊວນໂດຍຄົນທີ່ເຂົາໄວ້ໃຈ", en: "3 in 4 are recruited by someone they trust" },
+  homeStat2:    { lo: "79% ບໍ່ຮູ້ວ່າສູນຫຼອກລວງມີຈິງ ກ່ອນຖືກຫຼອກ", en: "79% didn't know scam compounds existed before being trafficked" },
+  homeExplore:  { lo: "ໃຊ້ຟີເຈີຂອງພວກເຮົາ", en: "Explore our features" },
+  openFeature:  { lo: "ເປີດ", en: "Open" },
+  featCheck:    { lo: "ກວດສອບວຽກ", en: "Check a job" },
+  featCheckDesc:{ lo: "ວາງຂໍ້ຄວາມ, ຮູບ, ສຽງ ຫຼື ລິ້ງ ແລ້ວກວດວ່າວຽກນັ້ນສ່ຽງຫຼືບໍ່.", en: "Paste a message, image, voice, or link and check if a job is risky." },
+  featPractice: { lo: "ຝຶກຮັບມື", en: "Practice" },
+  featPracticeDesc:{ lo: "ຫຼິ້ນສະຖານະການຈຳລອງ ຝຶກຕັດສິນໃຈຮັບມືກັບການຊັກຊວນ.", en: "Play a simulated scenario and practice handling recruitment." },
+  featLearn:    { lo: "ຮຽນຮູ້ ແລະ ແບ່ງປັນ", en: "Learn & share" },
+  featLearnDesc:{ lo: "ຮຽນຮູ້ຈາກແຫຼ່ງຂໍ້ມູນຈິງ ແລະ ແບ່ງປັນປະສົບການ.", en: "Learn from real resources and share experiences." },
+
+  helpToggle:   { lo: "ໃຊ້ແນວໃດ?", en: "How does this work?" },
+  helpBody:     { lo: "1) ເລືອກຂໍ້ຄວາມ, ຮູບພາບ, ສຽງ/ວິດີໂອ ຫຼື ລິ້ງ 2) ວາງ ຫຼື ອັບໂຫລດຂໍ້ສະເໜີວຽກ 3) ເບິ່ງຜົນ ແລະ ຄຳແນະນຳ. ຂໍ້ມູນຂອງທ່ານບໍ່ຖືກເກັບໄວ້.", en: "1) Pick text, image, voice/video, or link. 2) Paste or upload the job offer. 3) See the result and guidance. Nothing you enter is stored." },
+
+  tabText:  { lo: "ຂໍ້ຄວາມ", en: "Text" },
+  tabImage: { lo: "ຮູບພາບ", en: "Image" },
+  tabVoice: { lo: "ສຽງ/ວິດີໂອ", en: "Voice/Video" },
+  tabLink:  { lo: "ລິ້ງ", en: "Link" },
+
+  textPrompt:   { lo: "ວາງຂໍ້ຄວາມສະເໜີວຽກທີ່ນີ້", en: "Paste the job offer you received" },
+  textPlaceholder: { lo: "ວາງຂໍ້ຄວາມຈາກ Telegram, Facebook, WhatsApp...", en: "Paste the message from Telegram, Facebook, WhatsApp..." },
+  tryExample:   { lo: "ລອງຕົວຢ່າງ", en: "Try an example" },
+  clear:        { lo: "ລຶບ", en: "Clear" },
+  analyzeOffer: { lo: "ກວດສອບຂໍ້ສະເໜີນີ້", en: "Verify this offer" },
+  analyzing:    { lo: "ກຳລັງກວດສອບ", en: "Analyzing" },
+  textPrivacy:  { lo: "ການວິເຄາະແລ່ນຢູ່ໃນອຸປະກອນຂອງທ່ານເທົ່ານັ້ນ — ບໍ່ມີການສົ່ງຂໍ້ຄວາມທີ່ພິມໄປໃສ.", en: "Text analysis runs on your device only — nothing you type is uploaded anywhere." },
+
+  imagePrompt:  { lo: "ອັບໂຫລດຮູບພາບຂໍ້ສະເໜີວຽກ", en: "Upload a screenshot of the job offer" },
+  imageSupports:{ lo: "ຮອງຮັບຂໍ້ຄວາມພາສາລາວ ແລະ ພາສາອັງກິດໃນຮູບ.", en: "Supports Lao and English text in the image." },
+  readText:     { lo: "ອ່ານຂໍ້ຄວາມຈາກຮູບ", en: "Read text from image" },
+  readingText:  { lo: "ກຳລັງອ່ານຂໍ້ຄວາມ...", en: "Reading text from image..." },
+  textWeRead:   { lo: "ຂໍ້ຄວາມທີ່ອ່ານໄດ້ (ແກ້ໄຂໄດ້):", en: "Text we read (you can correct it):" },
+  analyzeText:  { lo: "ກວດສອບຂໍ້ຄວາມນີ້", en: "Verify this text" },
+  imagePrivacy: { lo: "ການອ່ານຮູບ ແລະ ການວິເຄາະ ແລ່ນຢູ່ໃນອຸປະກອນຂອງທ່ານ.", en: "Image reading and analysis both run on your device." },
+
+  voicePrompt:  { lo: "ບັນທຶກ ຫຼື ອັບໂຫລດຂໍ້ຄວາມສຽງ/ວິດີໂອ", en: "Record or upload a voice message / video" },
+  record:       { lo: "ບັນທຶກສຽງ", en: "Record" },
+  upload:       { lo: "ອັບໂຫລດ", en: "Upload" },
+  voiceHint:    { lo: "ບັນທຶກໄດ້ເຖິງ 60 ວິນາທີ ຫຼື ອັບໂຫລດໄຟລ໌ສຽງ/ວິດີໂອສັ້ນ (ຕໍ່າກວ່າ 4MB).", en: "Recordings are capped at 60 seconds; uploaded voice/video files should be under about 4MB (a short clip)." },
+  stop:         { lo: "ຢຸດ", en: "Stop" },
+  discard:      { lo: "ລຶບ", en: "Discard" },
+  transcribe:   { lo: "ແປງເປັນຂໍ້ຄວາມ", en: "Transcribe" },
+  transcribing: { lo: "ກຳລັງແປງເປັນຂໍ້ຄວາມ...", en: "Transcribing..." },
+  transcript:   { lo: "ຂໍ້ຄວາມທີ່ແປງໄດ້ (ແກ້ໄຂໄດ້):", en: "Transcript (you can correct it):" },
+  voicePrivacy: { lo: "ໄຟລ໌ສຽງ/ວິດີໂອຖືກສົ່ງໄປແປງເປັນຂໍ້ຄວາມຢູ່ເຊີບເວີ ຈາກນັ້ນລົບອອກ — ບໍ່ຖືກເກັບໄວ້ ຫຼື ກວດໂດຍຄົນ.", en: "The audio/video is sent to a server just to transcribe it, then discarded — it is not stored or reviewed by a person." },
+
+  linkPrompt:   { lo: "ວາງລິ້ງຂໍ້ສະເໜີວຽກ", en: "Paste a job-offer link" },
+  linkPlaceholder: { lo: "example.com/apply ຫຼື ລິ້ງທີ່ແບ່ງປັນມາ", en: "example.com/apply or a shared link" },
+  tiktokExample:{ lo: "ຕົວຢ່າງ TikTok", en: "TikTok example" },
+  checkLink:    { lo: "ກວດສອບລິ້ງນີ້", en: "Verify this link" },
+  checkingLink: { lo: "ກຳລັງກວດສອບລິ້ງ...", en: "Checking link..." },
+  linkPrivacy:  { lo: "ຂັ້ນຕອນນີ້ໂຫລດໜ້າເວັບຜ່ານເຊີບເວີເພື່ອກວດສອບ — ຕ່າງຈາກໂໝດຂໍ້ຄວາມ/ຮູບ, ລິ້ງຖືກສົ່ງໄປກວດ. ໃຊ້ໄດ້ກັບລິ້ງ TikTok (ອ່ານແຄັບຊັນ). ໂພສ Telegram/Facebook ສ່ວນຕົວມັກອ່ານບໍ່ໄດ້.", en: "This step loads the page through a server to read it — unlike text/image mode, the link itself is sent for checking. Works with TikTok links (reads the caption). Private Telegram/Facebook posts often cannot be read this way." },
+
+  checkAnother: { lo: "ກວດຂໍ້ສະເໜີອື່ນ", en: "Check another offer" },
+  checkedLabel: { lo: "ກວດແລ້ວ:", en: "Checked:" },
+  viewDetails:  { lo: "ເບິ່ງລາຍລະອຽດ", en: "View details" },
+  backToResult: { lo: "ກັບໄປຜົນ", en: "Back to result" },
+  warningsFound:{ lo: "ສັນຍານເຕືອນທີ່ພົບ", en: "Warning signs found" },
+  patternsA:    { lo: "ພົບ", en: "" },
+  patternsB:    { lo: "ຈາກ", en: "of" },
+  patternsC:    { lo: "ຮູບແບບເຕືອນ", en: "warning patterns detected" },
+  foundLabel:   { lo: "ພົບ:", en: "found:" },
+  whatToDo:     { lo: "ບໍ່ແນ່ໃຈບໍ? ຄວນເຮັດແນວນີ້", en: "Not sure? Here is what to do" },
+  tellTitle:    { lo: "ບອກຄົນທີ່ທ່ານໄວ້ໃຈ", en: "Tell someone you trust" },
+  tellBody:     { lo: "3 ໃນ 4 ຂອງຜູ້ຖືກຫຼອກ ຖືກຊັກຊວນໂດຍຄົນທີ່ເຂົາໄວ້ໃຈ. ໃຫ້ຄົນໜຶ່ງເບິ່ງຜົນນີ້ກ່ອນເຈົ້າຕອບ ຫຼື ເດີນທາງ.", en: "3 of 4 victims were recruited by someone they trusted. Let one person see this result before you reply or travel." },
+  shareContact: { lo: "ແບ່ງປັນຜົນກວດ", en: "Share with a trusted contact" },
+  copyMessage:  { lo: "ຄັດລອກຂໍ້ຄວາມ", en: "Copy message" },
+  copied:       { lo: "ຄັດລອກແລ້ວ", en: "Copied to clipboard" },
+  linkOnlyNote: { lo: "ໂຫລດເນື້ອຫາໜ້າເວັບອັດຕະໂນມັດບໍ່ໄດ້ — ແຕ່ຍັງກວດຕົວລິ້ງເອງໄດ້ຢູ່ລຸ່ມນີ້.", en: "Couldn't load the page content automatically — but we still checked the link itself below." },
+
+  shareTool:    { lo: "ແບ່ງປັນເຄື່ອງມືນີ້", en: "Share this tool" },
+  disclaimer:   { lo: "ຂໍ້ຄວາມພາສາລາວແມ່ນສະບັບຮ່າງ ລໍຖ້າການກວດຈາກເຈົ້າຂອງພາສາ. ເຄື່ອງມືນີ້ໃຫ້ຄຳແນະນຳ, ບໍ່ແມ່ນການຮັບປະກັນ.", en: "Lao copy is draft, pending native-speaker review. This tool gives guidance, not a guarantee." },
+  qrTitle:      { lo: "ສະແກນເພື່ອເປີດ JobVerifAI", en: "Scan to open JobVerifAI" },
+  qrSub:        { lo: "ສະແກນເພື່ອເປີດເຄື່ອງມືນີ້ໃນໂທລະສັບເຄື່ອງອື່ນ", en: "Scan to open this tool on another phone" },
+  close:        { lo: "ປິດ", en: "Close" },
+
+  /* practice */
+  pIntroTitle:  { lo: "ຝຶກຮັບມືກັບຂໍ້ສະເໜີວຽກຈຳລອງ", en: "Practice handling a simulated job offer" },
+  pIntroBody:   { lo: "ໝູ່ຂອງເຈົ້າຊື່ Bee ຈະສົ່ງຂໍ້ຄວາມສະເໜີວຽກມາ. ໃນແຕ່ລະຂັ້ນຕອນ ເລືອກຄຳຕອບຂອງເຈົ້າ — ຢຸດເພື່ອກວດສອບໃຫ້ໄວເທົ່າໃດ ຍິ່ງດີເທົ່ານັ້ນ!", en: "Your friend Bee will send you a job offer. At each step, pick your answer — the sooner you stop to verify, the better!" },
+  pStart:       { lo: "ເລີ່ມຫຼິ້ນ", en: "Start playing" },
+  pKeepIntro:   { lo: "ຂໍ້ຄວາມຈາກ Bee 💬", en: "Message from Bee 💬" },
+  pChoose:      { lo: "ເຈົ້າຈະຕອບແນວໃດ?", en: "How do you reply?" },
+  pChecking:    { lo: "ກຳລັງກວດສອບ...", en: "Checking..." },
+  pGoodTitle:   { lo: "ເກັ່ງຫຼາຍ! ເຈົ້າຢຸດເພື່ອກວດສອບ 🎉", en: "Nice! You stopped to verify 🎉" },
+  pGoodBody:    { lo: "ການຢຸດເພື່ອກວດສອບ ກ່ອນຕອບ ຫຼື ເດີນທາງ ແມ່ນນິໄສທີ່ປົກປ້ອງເຈົ້າໄດ້ດີທີ່ສຸດ. ນີ້ຄືສິ່ງທີ່ເຄື່ອງມືກວດສອບພົບໃນຂໍ້ຄວາມຂອງ Bee:", en: "Pausing to verify before you reply or travel is the single most protective habit. Here's what the verifier found in Bee's messages:" },
+  pStars:       { lo: "ດາວທີ່ໄດ້", en: "Stars earned" },
+  pGoodDetectB: { lo: "ຈາກ", en: "of" },
+  pGoodDetectC: { lo: "ຮູບແບບເຕືອນ", en: "warning patterns" },
+  pSeeChecker:  { lo: "ເບິ່ງລາຍລະອຽດໃນເຄື່ອງມືກວດສອບ", en: "See full detail in the verifier" },
+  pPlayAgain:   { lo: "ຫຼິ້ນອີກຄັ້ງ", en: "Play again" },
+  pBadTitle:    { lo: "ຖ້າເຈົ້າຕົກລົງໄປຮອດຈຸດນີ້...", en: "If you had agreed all the way to this point..." },
+  pBadBody1:    { lo: "...ຂັ້ນຕໍ່ໄປໃນກໍລະນີແທ້ໆ ມັກຈະເປັນການບອກໃຫ້ໄປພົບ “ຄົນຂັບລົດຂອງຫົວໜ້າ” ຢູ່ຊາຍແດນເພື່ອຂ້າມໄປ. ນີ້ແມ່ນຮູບແບບດຽວກັນທີ່ພົບໃນກໍລະນີແທ້ — ຄົນກາງທີ່ໄວ້ໃຈ, ຄວາມຮີບດ່ວນ, ແລະ ເອກະສານທີ່ຄົນອື່ນຈັດການໃຫ້.", en: "...the next step in real documented cases is usually being told to meet the “manager's driver” at the border to cross. Same pattern as real cases — a trusted go-between, urgency, and paperwork handled by someone else." },
+  pBadBody2:    { lo: "ນີ້ພຽງແຕ່ການຈຳລອງ — ບໍ່ມີໃຜເປັນຫຍັງ. ຄົນທີ່ຢູ່ໃນສະຖານະການນີ້ແທ້ໆ ເຄີຍໄດ້ຮັບການຊ່ວຍເຫຼືອ.", en: "This is only a simulation — no one got hurt. Real people in this situation have been helped." },
+  pHelpTitle:   { lo: "ຖ້າສິ່ງນີ້ກຳລັງເກີດຂຶ້ນແທ້", en: "If something like this is really happening" },
+  pHelpBody:    { lo: "ໂທຫາສາຍດ່ວນສະຫະພັນແມ່ຍິງລາວ 1362 (24 ຊົ່ວໂມງ) ຫຼື ຕິດຕໍ່ Village Focus International.", en: "Call the Lao Women's Union hotline 1362 (24/7) or reach out to Village Focus International." },
+
+  /* learn + voices */
+  learnIntro:   { lo: "ຂໍ້ມູນຈາກອົງກອນທີ່ກ່ຽວຂ້ອງ ນຳສະເໜີພ້ອມການອ້າງອີງ ແລະ ລິ້ງກັບໄປຫາແຫຼ່ງທີ່ມາ.", en: "Materials from related organizations, shown with attribution and a link back to the source." },
+  viewSource:   { lo: "ເບິ່ງແຫຼ່ງທີ່ມາ", en: "View source" },
+  voicesTitle:  { lo: "ສຽງຈາກຊຸມຊົນ", en: "Community voices" },
+  voicesIntro:  { lo: "ແບ່ງປັນປະສົບການ ຫຼື ຄຳເຕືອນຂອງເຈົ້າ ເພື່ອຊ່ວຍປົກປ້ອງຄົນອື່ນ. (ຕົວຢ່າງສາທິດ — ໃນສະບັບຈິງ ຂໍ້ຄວາມຈະຖືກກວດສອບ ແລະ ບໍ່ເປີດເຜີຍຕົວຕົນ.)", en: "Share your experience or a warning to help protect others. (Demo — in the real product, posts are moderated and anonymous.)" },
+  voicesNamePh: { lo: "ຊື່ຫຼິ້ນ (ບໍ່ບັງຄັບ)", en: "Nickname (optional)" },
+  voicesBodyPh: { lo: "ຂຽນປະສົບການ ຫຼື ຄຳເຕືອນຂອງເຈົ້າ...", en: "Write your experience or a warning..." },
+  voicesSubmit: { lo: "ແບ່ງປັນ", en: "Share" },
+  voicesAnon:   { lo: "ບໍ່ລະບຸຊື່", en: "Anonymous" },
+  voicesThanks: { lo: "ຂອບໃຈທີ່ແບ່ງປັນ! ຂໍ້ຄວາມຂອງເຈົ້າຖືກເພີ່ມແລ້ວ.", en: "Thanks for sharing! Your story has been added." },
+  voicesViewAll:{ lo: "ເບິ່ງເລື່ອງລາວທັງໝົດ", en: "View all stories" },
+  voicesWallTitle:{ lo: "ສຽງຈາກຊຸມຊົນ", en: "Community voices" },
+  voicesWallSub:{ lo: "ເລື່ອງລາວ ແລະ ຄຳເຕືອນ ຈາກຄົນທີ່ຜ່ານມາກ່ອນ", en: "Stories and warnings from people who have been there" },
+  voicesBack:   { lo: "ກັບຄືນ", en: "Back" },
+  voicesCountA: { lo: "ທັງໝົດ", en: "" },
+  voicesCountB: { lo: "ເລື່ອງລາວ", en: "stories" },
+  voicesDemoNote:{ lo: "ຕົວຢ່າງສາທິດ — ຂໍ້ຄວາມສະແດງໃນເຄື່ອງນີ້ເທົ່ານັ້ນ. ໃນສະບັບຈິງ ຈະຖືກກວດສອບ ແລະ ບໍ່ເປີດເຜີຍຕົວຕົນ.", en: "Demo — posts are shown on this device only. In the real product they are moderated and anonymous." }
+};
+
+/* ================= error dictionary ================= */
+const ERR = {
+  ocrRead:        { lo: "ອ່ານຂໍ້ຄວາມຈາກຮູບນັ້ນບໍ່ໄດ້. ລອງໃຊ້ຮູບທີ່ຊັດເຈນກວ່າ ຫຼື ວາງຂໍ້ຄວາມແທນ.", en: "Couldn't read text from that image. Try a clearer screenshot, or paste the text instead." },
+  linkGeneric:    { lo: "ກວດສອບລິ້ງນັ້ນບໍ່ໄດ້. ລອງວາງຂໍ້ຄວາມ ຫຼື ຮູບແທນ.", en: "Couldn't check that link. Try pasting the message text or a screenshot instead." },
+  linkService:    { lo: "ຕິດຕໍ່ບໍລິການກວດສອບລິ້ງບໍ່ໄດ້ໃນຕອນນີ້. ລອງວາງຂໍ້ຄວາມ ຫຼື ຮູບແທນ.", en: "Couldn't reach the link-checking service. Try pasting the message text or a screenshot instead." },
+  voiceUnsupported:{ lo: "ບຣາວເຊີນີ້ບໍ່ຮອງຮັບການບັນທຶກສຽງ. ກະລຸນາອັບໂຫລດໄຟລ໌ສຽງ ຫຼື ວິດີໂອແທນ.", en: "Voice recording isn't supported in this browser. Please upload a voice message or video file instead." },
+  voiceMic:       { lo: "ການເຂົ້າເຖິງໄມໂຄຣໂຟນຖືກບລັອກ. ອະນຸຍາດການໃຊ້ໄມໂຄຣໂຟນ ຫຼື ອັບໂຫລດໄຟລ໌ສຽງແທນ.", en: "Microphone access was blocked. Allow microphone access, or upload a voice message file instead." },
+  voiceTooLarge:  { lo: "ໄຟລ໌ນັ້ນໃຫຍ່ເກີນໄປ (ເກີນ ~4MB). ໃຫ້ບັນທຶກສຽງຕໍ່າກວ່າ 1 ນາທີ ຫຼື ຕັດວິດີໂອໃຫ້ສັ້ນລົງ.", en: "That file is too large (over ~4MB). Please keep voice notes under about a minute, or trim the video to a few seconds." },
+  voiceFail:      { lo: "ແປງໄຟລ໌ນັ້ນເປັນຂໍ້ຄວາມບໍ່ໄດ້.", en: "Couldn't transcribe that file." },
+  voiceService:   { lo: "ຕິດຕໍ່ບໍລິການແປງສຽງບໍ່ໄດ້ໃນຕອນນີ້. ກະລຸນາລອງໃໝ່.", en: "Couldn't reach the transcription service right now. Please try again." },
+  staticLink:     { lo: "ຟີເຈີກວດລິ້ງໃຊ້ໄດ້ໃນສະບັບເຕັມ (ທີ່ມີເຊີບເວີ). ໃນເວີຊັນນີ້ ກະລຸນາໃຊ້ໂໝດ ຂໍ້ຄວາມ ຫຼື ຮູບພາບ.", en: "Link checking works in the full server version. In this build, please use Text or Image mode." },
+  staticVoice:    { lo: "ຟີເຈີສຽງ/ວິດີໂອໃຊ້ໄດ້ໃນສະບັບເຕັມ (ທີ່ມີເຊີບເວີ). ໃນເວີຊັນນີ້ ກະລຸນາໃຊ້ໂໝດ ຂໍ້ຄວາມ ຫຼື ຮູບພາບ.", en: "Voice/Video works in the full server version. In this build, please use Text or Image mode." }
+};
+const D_STATIC = { lo: "ໝາຍເຫດ: ໃນເວີຊັນສາທິດນີ້ ໂໝດນີ້ຍັງບໍ່ເປີດໃຊ້ — ໃຊ້ໄດ້ໃນສະບັບເຕັມ. ລອງໂໝດ ຂໍ້ຄວາມ ຫຼື ຮູບພາບ.", en: "Note: this feature is off in this demo build — it works in the full version. Try Text or Image mode." };
+function staticBanner() { return '<div style="font-size:12.5px;color:var(--warn-ink);background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:12px;padding:10px 12px;line-height:1.55;">ℹ️ ' + esc(L(D_STATIC)) + "</div>"; }
+function errText(key) { return key && ERR[key] ? L(ERR[key]) : ""; }
+
+/* ================= practice scenario (choice-based) ================= */
+const PRACTICE_SCENARIO = [
+  {
+    msg: {
+      lo: "ໝູ້ Bee (ໝູ່ທີ່ເຮັດວຽກຢູ່ໄທ): “ເອື້ອຍ! ບໍລິສັດຂ້ອຍຮັບພະນັກງານບໍລິການລູກຄ້າ ເງິນເດືອນ $1,500 ຕໍ່ເດືອນ, ມີບ່ອນພັກ ແລະ ລົດຮັບສົ່ງໃຫ້ຟຣີ. ຢາກໃຫ້ຂ້ອຍແນະນຳໃຫ້ບໍ່?”",
+      en: "Bee (your friend in Thailand): “Sister! My company is hiring customer service staff, $1,500/month, with free housing and transport. Want me to refer you?”"
+    },
+    options: [
+      { kind: "risky", label: { lo: "ສົນໃຈ! ສະໝັກເລີຍ 🎉", en: "I'm in! Sign me up 🎉" },
+        feedback: { lo: "Bee: “ດີເລີຍ!” ... ແຕ່ຊ້າກ່ອນ — ຄ່າຈ້າງສູງແບບນີ້ ໂດຍບໍ່ຮູ້ຫຍັງເລີຍ ຄວນລະວັງ.", en: "Bee: “Great!” ... but wait — pay this high with no details is worth a second look." } },
+      { kind: "safe", label: { lo: "ຂໍກວດເບິ່ງກ່ອນ 🔍", en: "Let me check it first 🔍" },
+        feedback: { lo: "ດີຫຼາຍ — ຄິດກ່ອນຕອບ ຄືການເລີ່ມຕົ້ນທີ່ດີ.", en: "Great instinct — thinking before replying is the right start." } }
+    ]
+  },
+  {
+    msg: {
+      lo: "Bee: “ດ່ວນໆເດີ! ເຫຼືອແຕ່ 3 ບ່ອນອາທິດນີ້. ຫົວໜ້າຢາກຮູ້ຄຳຕອບມື້ນີ້. ບໍ່ຕ້ອງກັງວົນ, ຂ້ອຍຊ່ວຍເລື່ອງ passport ແລະ visa ໃຫ້ໝົດ.”",
+      en: "Bee: “Hurry! Only 3 spots left this week. The boss wants an answer today. Don't worry, I'll handle your passport and visa for you.”"
+    },
+    options: [
+      { kind: "risky", label: { lo: "ໂອເຄ, ຟ້າວເລີຍ ⏩", en: "Okay, let's hurry ⏩" },
+        feedback: { lo: "Bee: “👍” ... ຄວາມຮີບດ່ວນ + ຄົນອື່ນຖື passport ໃຫ້ = ສັນຍານອັນຕະລາຍ.", en: "Bee: “👍” ... urgency + someone else holding your passport = danger signs." } },
+      { kind: "safe", label: { lo: "ຢຸດກ່ອນ — ຂໍກວດຂໍ້ມູນ 🛑", en: "Wait — I'll verify this 🛑" },
+        feedback: { lo: "ດີຫຼາຍ! ຄວາມຮີບດ່ວນຄືກົນລໍ້ — ເຈົ້າບໍ່ຫຼົງ.", en: "Excellent! Urgency is the trap — you didn't fall for it." } }
+    ]
+  },
+  {
+    msg: {
+      lo: "ເຈົ້າຖາມຊື່ບໍລິສັດ. Bee: “ງ່າຍກວ່າ ຖ້າລົມກັບຫົວໜ້າຂ້ອຍໂດຍກົງທາງ Telegram, @quickhire_admin. ລາວຈະສົ່ງປີ້ໃຫ້ທັນທີທີ່ເຈົ້າຕົກລົງ.”",
+      en: "You ask for the company name. Bee: “Easier if you talk to my manager on Telegram, @quickhire_admin. He'll send the ticket as soon as you confirm.”"
+    },
+    options: [
+      { kind: "risky", label: { lo: "ໄດ້, ຕິດຕໍ່ຫາເລີຍ 📲", en: "Sure, I'll message him 📲" },
+        feedback: { lo: "ບໍ່ມີຊື່ບໍລິສັດ, ບໍ່ມີເວັບໄຊ, ພຽງແຕ່ Telegram — ນີ້ຄືສັນຍານສຸດທ້າຍ.", en: "No company name, no website, only Telegram — this is the final red flag." } },
+      { kind: "safe", label: { lo: "ບໍ່ — ຂໍກວດສອບກ່ອນ ✋", en: "No — I'll verify first ✋" },
+        feedback: { lo: "ຖືກຕ້ອງ! ຕິດຕໍ່ໄດ້ທາງແຊັດເທົ່ານັ້ນ ກວດສອບບໍ່ໄດ້.", en: "Right call! Chat-only contact can't be verified." } }
+    ]
+  }
+];
+function practiceLogUpTo(step) {
+  return PRACTICE_SCENARIO.slice(0, step + 1).map((s) => s.msg.lo + "\n" + s.msg.en).join("\n\n");
+}
+
+/* ================= learn (resources) data ================= */
+const LEARN_RESOURCES = [
+  {
+    org:   { lo: "Village Focus International", en: "Village Focus International" },
+    title: { lo: "ນິທານ: ຊີວິດຂອງນາງນ້ອຍ", en: "The Life of Miss Noy" },
+    desc:  { lo: "ນິທານພາບປະກອບຈາກ VFI ກ່ຽວກັບວິທີທີ່ຄຳໝັ້ນສັນຍາເລື່ອງວຽກງ່າຍໆຢູ່ຕ່າງປະເທດ ອາດເປັນຈຸດເລີ່ມຕົ້ນຂອງກໍລະນີຄ້າມະນຸດ.", en: "An illustrated awareness storybook published by VFI about how a trusted acquaintance's promise of easy work abroad can be the start of a trafficking case." },
+    img: "https://villagefocus.org/wp-content/uploads/2022/03/the-life-of-miss-noy.png",
+    icon: "📖", c1: "#12AEC4", c2: "#0B7E90",
+    link: "https://villagefocus.org/trafficking-book-the-life-of-miss-noy/"
+  },
+  {
+    org:   { lo: "Village Focus International", en: "Village Focus International" },
+    title: { lo: "ປຶ້ມຄູ່ມືກົດໝາຍວ່າດ້ວຍການຄ້າມະນຸດ", en: "Human Trafficking Legal Guidebook" },
+    desc:  { lo: "ຄູ່ມືຂອງ VFI ເພື່ອສ້າງຄວາມຮັບຮູ້ໃນເຂດຊົນນະບົດ ກ່ຽວກັບໄພຂອງການຄ້າມະນຸດ ແລະ ວິທີທີ່ກົດໝາຍລາວແກ້ໄຂ.", en: "VFI's guide to raise awareness in rural areas of the dangers of human trafficking, and how Lao law addresses and punishes it." },
+    img: "https://villagefocus.org/wp-content/uploads/2022/03/human-trafficking-legal-guidebook.png",
+    icon: "⚖️", c1: "#0E3352", c2: "#12AEC4",
+    link: "https://villagefocus.org/human-trafficking-legal-guidebook/"
+  },
+  {
+    org:   { lo: "Village Focus International", en: "Village Focus International" },
+    title: { lo: "ບົດລາຍງານແນວປະຕິບັດທີ່ດີ PEWC", en: "PEWC Good Practices Report" },
+    desc:  { lo: "ບົດລາຍງານໂຄງການປົກປ້ອງ ແລະ ສ້າງຄວາມເຂັ້ມແຂງໃຫ້ແມ່ຍິງ ແລະ ເດັກ ຂອງ VFI.", en: "VFI's Protecting and Empowering Women and Children program report, documenting direct services for trafficking victims and those at risk." },
+    img: "https://villagefocus.org/wp-content/uploads/2022/03/PEWC-good-practices.png",
+    icon: "🛡️", c1: "#12AEC4", c2: "#0E97AB",
+    link: "https://villagefocus.org/pewc-good-practices-report/"
+  },
+  {
+    org:   { lo: "ສະຫະພັນແມ່ຍິງລາວ", en: "Lao Women's Union" },
+    title: { lo: "ສາຍດ່ວນ 1362 · ໃຫ້ຄຳປຶກສາ ແລະ ປົກປ້ອງ", en: "1362 · Counselling & Protection Hotline" },
+    desc:  { lo: "ສາຍດ່ວນຟຣີ 24 ຊົ່ວໂມງ ສຳລັບຜູ້ໄດ້ຮັບຜົນກະທົບຈາກການຄ້າມະນຸດ ຫຼື ຕ້ອງການຄວາມຊ່ວຍເຫຼືອດ່ວນ.", en: "A free, 24/7 hotline for anyone affected by trafficking, abuse, or in need of urgent help or advice." },
+    img: "",
+    icon: "☎️", c1: "#0A2540", c2: "#0E3352",
+    link: "https://findahelpline.com/organizations/lao-women-s-union-counselling-and-protection-centre"
+  }
+];
+/* generated cover thumbnail (data-URI SVG) so every resource shows an image */
+function coverDataUri(icon, c1, c2, label) {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 168">'
+    + '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + c1 + '"/><stop offset="1" stop-color="' + c2 + '"/></linearGradient></defs>'
+    + '<rect width="120" height="168" rx="10" fill="url(#g)"/>'
+    + '<rect x="10" y="12" width="34" height="5" rx="2.5" fill="rgba(255,255,255,0.55)"/>'
+    + '<text x="60" y="98" font-size="46" text-anchor="middle" dominant-baseline="middle">' + icon + '</text>'
+    + '<text x="60" y="150" font-size="11" font-family="Arial,sans-serif" font-weight="700" fill="rgba(255,255,255,0.92)" text-anchor="middle">' + label + '</text>'
+    + '</svg>';
+  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+}
+
+/* seeded community voices (attributed, bilingual) */
+const SEED_VOICES = [
+  { seed: true, name: { lo: "ບໍ່ລະບຸຊື່", en: "Anonymous" },
+    body: { lo: "ຂ້ອຍເກືອບຕົກລົງໄປເຮັດວຽກທີ່ບໍ່ແກ້ວ ເພາະໝູ່ຊວນ. ໂຊກດີທີ່ແມ່ໃຫ້ກວດເບິ່ງກ່ອນ — ມັນເປັນວຽກປອມ.", en: "I almost took a job in Bokeo because a friend invited me. Luckily my mother told me to check first — it was a fake job." } },
+  { seed: true, name: { lo: "ນ້ອຍ", en: "Noy" },
+    body: { lo: "ຖ້າມີໃຜບອກວ່າຈັດການ passport ໃຫ້ໝົດ — ໃຫ້ລະວັງ. ນັ້ນຄືສັນຍານອັນຕະລາຍ.", en: "If someone says they'll handle your passport for you — be careful. That's a dangerous sign." } }
+];
+
+/* ================= example content ================= */
+function example() {
+  return "URGENT HIRING!! Online Customer Service Staff\n" +
+    "Salary $1,500 - $2,500 per month + commission\n" +
+    "Location: Bokeo (Golden Triangle SEZ office, near Thai border)\n" +
+    "- No experience needed, full training provided\n" +
+    "- FREE housing + 3 meals a day\n" +
+    "- Company pays all travel costs to the site\n" +
+    "- Passport and visa 100% handled by the company\n" +
+    "Only 5 positions left -- start immediately!\n" +
+    "Contact HR now on Telegram: @gt_jobs_hr (Telegram only, fast reply)";
+}
+function exampleLink() { return "https://bit.ly/3gt-jobs-hr"; }
+function exampleTikTok() { return "https://www.tiktok.com/@example/video/7000000000000000000"; }
+
+/* ================= content red-flag rules ================= */
+function checks() {
+  const rx = (t, re) => { const m = t.match(re); return m ? m[0] : null; };
+  return [
+    { id: "salary", w: 2, name: { en: "Unusually high salary", lo: "ເງິນເດືອນສູງຜິດປົກກະຕິ" },
+      why: { en: "Scam recruiters advertise $1,000-$2,500+/month for basic work -- far above real entry-level pay in the region.", lo: "ຜູ້ຫຼອກລວງມັກໂຄສະນາເງິນເດືອນ $1,000-$2,500+ ຕໍ່ເດືອນສຳລັບວຽກງ່າຍໆ — ສູງກວ່າຄ່າຈ້າງເລີ່ມຕົ້ນຕົວຈິງໃນພາກພື້ນຫຼາຍ." },
+      find: (t) => rx(t, /\$\s?(\d{1,3},\d{3}|[1-9]\d{3,}|[7-9]\d{2})|(\d{1,3},\d{3}|[1-9]\d{3,}|[7-9]\d{2})\s?(usd|dollars?)\b|(high|big|good|attractive|top)\s+(salary|pay|income)|earn\s+up\s+to|salary[^\n.]{0,20}(\d{1,3},\d{3}|[1-9]\d{3})/i) },
+    { id: "housing", w: 2, name: { en: "Free housing, meals, or paid travel", lo: "ທີ່ພັກ/ອາຫານຟຣີ ຫຼື ຈ່າຍຄ່າເດີນທາງໃຫ້" },
+      why: { en: "\"Everything provided\" packages are used to move recruits far from home quickly, before they can reconsider.", lo: "ຊຸດ “ຈັດໃຫ້ໝົດ” ຖືກໃຊ້ເພື່ອຍ້າຍຄົນອອກຈາກບ້ານໄປໄກໆຢ່າງໄວ ກ່ອນທີ່ເຂົາຈະທົບທວນຄືນ." },
+      find: (t) => rx(t, /free\s+(housing|accommodation|room|dorm|meals?|food|flights?|tickets?|travel)|(housing|accommodation|meals?|food|dorm)\s+(is\s+)?(provided|included|free)|(company|we)\s+(pays?|covers?|provides?)[^\n.]{0,30}(housing|travel|flight|ticket|transport|relocation|accommodation|costs?)|all\s+expenses\s+(paid|covered)|(travel|flight|ticket|transport|relocation)\s+costs?[^\n.]{0,15}(paid|free|covered|provided)/i) },
+    { id: "urgency", w: 1.5, name: { en: "High-pressure urgency", lo: "ກົດດັນໃຫ້ຮີບຕັດສິນໃຈ" },
+      why: { en: "Rushing you (\"start today\", \"only a few slots\") is designed to stop you checking the company or asking others.", lo: "ການຮີບໃຫ້ເຈົ້າ (“ເລີ່ມມື້ນີ້”, “ເຫຼືອບໍ່ຫຼາຍບ່ອນ”) ຖືກອອກແບບເພື່ອຢຸດເຈົ້າກວດສອບບໍລິສັດ ຫຼື ຖາມຄົນອື່ນ." },
+      find: (t) => rx(t, /urgent|hurry|hire\s+today|immediate\s+start|start\s+(today|now|immediately)|apply\s+(now|today)|limited\s+(slots?|positions?|spaces?)|only\s+\d+\s+(slots?|positions?|spots?|places)|last\s+chance|act\s+fast|ດ່ວນ/i) },
+    { id: "chatOnly", w: 2, name: { en: "Contact only via chat app", lo: "ຕິດຕໍ່ໄດ້ທາງແອັບແຊັດເທົ່ານັ້ນ" },
+      why: { en: "No company email or website means nothing can be verified -- a Telegram or WhatsApp account can vanish in seconds.", lo: "ບໍ່ມີອີເມວ ຫຼື ເວັບໄຊຂອງບໍລິສັດ ໝາຍຄວາມວ່າກວດສອບຫຍັງບໍ່ໄດ້ — ບັນຊີ Telegram ຫຼື WhatsApp ຫາຍໄປໄດ້ພາຍໃນວິນາທີ." },
+      find: (t) => {
+        const chat = t.match(/telegram|whats\s?app|t\.me\/|line\s+id|wechat|@[a-z][a-z0-9_]{3,}/i);
+        if (!chat) return null;
+        const email = /[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+/i.test(t);
+        const site = /www\.|https?:\/\/(?!t\.me)|\.(com|la|org|net|co\.th)\b/i.test(t);
+        return (email || site) ? null : chat[0];
+      } },
+    { id: "fees", w: 2.5, name: { en: "Asks for money upfront", lo: "ຂໍເງິນລ່ວງໜ້າ" },
+      why: { en: "Real employers never charge you to be hired. Any deposit, registration, or \"training fee\" is a scam signal.", lo: "ນາຍຈ້າງແທ້ບໍ່ເຄີຍເກັບເງິນເຈົ້າເພື່ອຮັບເຂົ້າເຮັດວຽກ. ຄ່າມັດຈຳ, ຄ່າລົງທະບຽນ ຫຼື “ຄ່າຝຶກອົບຮົມ” ໃດໆ ແມ່ນສັນຍານຫຼອກລວງ." },
+      find: (t) => rx(t, /upfront|deposit|(registration|training|processing|application|document|agency|visa)\s+fees?|pay\s+(a\s+fee|first|before|in\s+advance)|send\s+(us\s+)?money/i) },
+    { id: "noexp", w: 1, name: { en: "\"No experience needed\"", lo: "ບໍ່ຕ້ອງມີປະສົບການ" },
+      why: { en: "High pay with no skills, no interview, and \"full training\" is a classic lure -- real jobs screen candidates.", lo: "ຄ່າຈ້າງສູງໂດຍບໍ່ຕ້ອງມີທັກສະ, ບໍ່ມີການສຳພາດ ແລະ “ຝຶກໃຫ້ໝົດ” ແມ່ນເຄື່ອງລໍ້ຄລາສສິກ — ວຽກແທ້ຄັດເລືອກຜູ້ສະໝັກ." },
+      find: (t) => rx(t, /no\s+(experience|skills?|qualifications?|diploma|degree)\s+(needed|required|necessary)?|without\s+experience|anyone\s+can\s+(do|apply)|training\s+(is\s+)?provided|will\s+train/i) },
+    { id: "vague", w: 1.5, name: { en: "Vague job with unusual pay", lo: "ວຽກບໍ່ຊັດເຈນ ແຕ່ຄ່າຈ້າງສູງ" },
+      why: { en: "\"Online customer service\", \"typing\", and \"data entry\" are the most common covers for scam-compound work.", lo: "“ບໍລິການລູກຄ້າອອນລາຍ”, “ພິມຂໍ້ຄວາມ” ແລະ “ປ້ອນຂໍ້ມູນ” ແມ່ນຂໍ້ອ້າງທີ່ພົບຫຼາຍທີ່ສຸດສຳລັບວຽກໃນສູນຫຼອກລວງ." },
+      find: (t, ctx) => {
+        const m = (t.match(/(online\s+)?(customer\s+(service|support|care)|data\s+entry|typing\s+(job|work)|chat\s+(support|operator|agent)|online\s+(sales|marketing)|computer\s+operator|admin\s+work)/i) || [null])[0];
+        return m && (ctx.salary || ctx.noexp) ? m : null;
+      } },
+    { id: "destNamed", w: 2.5, name: { en: "High-risk destination", lo: "ຈຸດໝາຍປາຍທາງສ່ຽງສູງ" },
+      why: { en: "Bokeo / Golden Triangle SEZ, Boten, and Myawaddy are documented locations of forced-criminality scam compounds.", lo: "ບໍ່ແກ້ວ/ສາມຫຼ່ຽມທອງຄຳ, ບໍ່ເຕັນ ແລະ ເມືອງຢາວາດີ ແມ່ນສະຖານທີ່ທີ່ຖືກບັນທຶກວ່າມີສູນຫຼອກລວງທີ່ບັງຄັບໃຊ້ແຮງງານ." },
+      find: (t) => rx(t, /bokeo|golden\s+triangle|boten|myawaddy|ton\s?pheung|special\s+economic\s+zone|\bsez\b|ບໍ່ແກ້ວ|ສາມຫຼ່ຽມທອງຄຳ|ບໍ່ເຕັນ/i) },
+    { id: "abroad", w: 1, name: { en: "Vague \"work abroad\" offer", lo: "ວຽກຢູ່ຕ່າງປະເທດແບບບໍ່ຊັດເຈນ" },
+      why: { en: "Offers to work \"abroad\" or \"overseas\" without a named, verifiable employer and address deserve extra caution.", lo: "ຂໍ້ສະເໜີໃຫ້ໄປເຮັດວຽກ “ຕ່າງປະເທດ” ໂດຍບໍ່ມີນາຍຈ້າງ ແລະ ທີ່ຢູ່ທີ່ກວດສອບໄດ້ ຄວນລະວັງເປັນພິເສດ." },
+      find: (t) => rx(t, /work\s+abroad|go\s+abroad|job\s+abroad|overseas\s+(job|work|position)|(job|work)\s+overseas|near\s+(the\s+)?(thai|myanmar|chinese|china)\s+border/i) },
+    { id: "passport", w: 2, name: { en: "Employer handles passport/visa", lo: "ນາຍຈ້າງຈັດການໜັງສືຜ່ານແດນ/ວີຊາໃຫ້" },
+      why: { en: "When the \"company\" arranges and holds your documents, you lose the ability to leave on your own terms.", lo: "ເມື່ອ “ບໍລິສັດ” ຈັດການ ແລະ ຖືເອກະສານຂອງເຈົ້າ, ເຈົ້າຈະສູນເສຍຄວາມສາມາດໃນການອອກໄປຕາມໃຈຕົນເອງ." },
+      find: (t) => rx(t, /(passport|visa|ໜັງສືຜ່ານແດນ)s?(\s+and\s+(passport|visa))?[^\n.]{0,60}(handled|provided|arranged|taken\s+care|sorted|prepared|no\s+need|free|100%|by\s+(the\s+)?company|we\s+(handle|arrange|provide|prepare|do|take))|(company|we)[^\n.]{0,30}(handles?|arranges?|provides?|prepares?|takes?\s+care\s+of)[^\n.]{0,20}(passport|visa)/i) }
+  ];
+}
+
+/* ================= URL-string heuristics ================= */
+const SHORTENERS = ["bit.ly","tinyurl.com","t.co","is.gd","cutt.ly","shorturl.at","rebrand.ly","tiny.cc","ow.ly","buff.ly","s.id","lin.ee","goo.gl","rb.gy","shrtco.de"];
+const RISKY_TLDS = ["xyz","top","club","live","work","click","link","buzz","icu","cyou","rest","gq","cf","tk","ml"];
+const BRAND_WORDS = ["telegram","facebook","whatsapp","messenger","line"];
+const REAL_BRAND_HOSTS = ["t.me","telegram.org","telegram.me","facebook.com","fb.com","whatsapp.com","messenger.com","line.me"];
+
+function urlChecks(rawUrl) {
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : "http://" + rawUrl); }
+  catch (e) { return []; }
+  const host = u.hostname.toLowerCase();
+  const out = [];
+  if (SHORTENERS.includes(host)) {
+    out.push({ w: 1.5, name: { en: "Uses a link shortener", lo: "ໃຊ້ລິ້ງຫຍໍ້" },
+      why: { en: "The real destination is hidden until you click -- shorteners are commonly used to bypass link-based warnings.", lo: "ປາຍທາງແທ້ຖືກເຊື່ອງໄວ້ຈົນກວ່າຈະກົດ — ລິ້ງຫຍໍ້ຖືກໃຊ້ຫຼາຍເພື່ອຫຼົບການເຕືອນຈາກລິ້ງ." } });
+  }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    out.push({ w: 2.5, name: { en: "Raw IP address instead of a domain", lo: "ໃຊ້ IP ແທນຊື່ໂດເມນ" },
+      why: { en: "Legitimate employers use a named, registered domain -- a bare IP address in a link is a strong warning sign.", lo: "ນາຍຈ້າງທີ່ຖືກຕ້ອງໃຊ້ຊື່ໂດເມນທີ່ຈົດທະບຽນ — ເລກ IP ດ້ວນໆໃນລິ້ງແມ່ນສັນຍານເຕືອນທີ່ຮ້າຍແຮງ." } });
+  }
+  if (u.protocol === "http:") {
+    out.push({ w: 1, name: { en: "Not a secure (https) connection", lo: "ບໍ່ແມ່ນການເຊື່ອມຕໍ່ທີ່ປອດໄພ (https)" },
+      why: { en: "Most legitimate modern sites use https. Plain http is increasingly rare and a mild warning sign on its own.", lo: "ເວັບໄຊທີ່ຖືກຕ້ອງສ່ວນຫຼາຍໃຊ້ https. http ທຳມະດາຫາຍາກຂຶ້ນ ແລະ ເປັນສັນຍານເຕືອນເບົາໆ." } });
+  }
+  const tld = host.split(".").pop();
+  if (RISKY_TLDS.includes(tld)) {
+    out.push({ w: 1, name: { en: "Unusual, low-cost domain ending (." + tld + ")", lo: "ໂດເມນລາຄາຖືກທີ່ພົບໃນເວັບຫຼອກລວງ (." + tld + ")" },
+      why: { en: "Domain endings like ." + tld + " are inexpensive and heavily used for short-lived scam sites -- not proof alone, but worth extra caution.", lo: "ນາມສະກຸນໂດເມນເຊັ່ນ ." + tld + " ລາຄາຖືກ ແລະ ຖືກໃຊ້ຫຼາຍໃນເວັບຫຼອກລວງອາຍຸສັ້ນ — ຄວນລະວັງ." } });
+  }
+  const isRealBrandHost = REAL_BRAND_HOSTS.some((b) => host === b || host.endsWith("." + b));
+  if (!isRealBrandHost) {
+    const mentionsBrand = BRAND_WORDS.some((b) => host.includes(b));
+    if (mentionsBrand) {
+      out.push({ w: 2, name: { en: "Domain name imitates a known platform", lo: "ໂດເມນປອມແປງເປັນແພລດຟອມທີ່ຮູ້ຈັກ" },
+        why: { en: "This domain references Telegram/Facebook/WhatsApp/Line in its name but is not their real domain -- a common look-alike scam pattern.", lo: "ໂດເມນນີ້ອ້າງເຖິງ Telegram/Facebook/WhatsApp/Line ໃນຊື່ ແຕ່ບໍ່ແມ່ນໂດເມນແທ້ — ຮູບແບບຫຼອກລວງແບບຮຽນແບບທີ່ພົບເລື້ອຍ." } });
+    }
+  }
+  if ((host.match(/-/g) || []).length >= 3) {
+    out.push({ w: 1, name: { en: "Unusually complex domain name", lo: "ຊື່ໂດເມນສັບສົນຜິດປົກກະຕິ" },
+      why: { en: "Domains stacked with many hyphens are a common obfuscation trick to look official at a glance.", lo: "ໂດເມນທີ່ມີຂີດຫຼາຍອັນເປັນກົນອຸບາຍປິດບັງທົ່ວໄປເພື່ອໃຫ້ເບິ່ງຄືທາງການ." } });
+  }
+  return out;
+}
+
+function runAnalysis(text, extraFlags) {
+  extraFlags = extraFlags || [];
+  const defs = checks();
+  const ctx = {};
+  const flags = extraFlags.slice();
+  let score = 0;
+  for (const f of extraFlags) score += f.w;
+  for (const d of defs) {
+    let m = null;
+    try { m = d.find(text, ctx); } catch (e) { m = null; }
+    if (m) {
+      ctx[d.id] = true;
+      const sn = (typeof m === "string") ? m.replace(/\s+/g, " ").trim() : "";
+      flags.push({ name: d.name, why: d.why, snippet: sn.length > 70 ? sn.slice(0, 67) + "..." : sn, hasSnippet: sn.length > 0 });
+      score += d.w;
+    }
+  }
+  const hi = 6, med = 3;
+  const level = score >= hi ? "HIGH" : score >= med ? "MEDIUM" : "LOW";
+  const L2 = {
+    HIGH: { name: { en: "High risk", lo: "ຄວາມສ່ຽງສູງ" }, color: "#C63B3B", bg: "#FBEAEA", border: "#F0C9C9",
+      short: { en: "Matches scam patterns — don't pay, send documents, or travel before verifying.", lo: "ຄ້າຍຮູບແບບຫຼອກລວງ — ຢ່າຈ່າຍ, ຢ່າສົ່ງເອກະສານ, ຢ່າເດີນທາງ ກ່ອນກວດ." },
+      expl: { en: "This offer matches several patterns used by trafficking and scam recruiters. Do not pay anything, send documents, or travel before verifying it independently.", lo: "ຂໍ້ສະເໜີນີ້ຄ້າຍກັບຮູບແບບການຫຼອກລວງແຮງງານ. ຢ່າຈ່າຍເງິນ, ຢ່າສົ່ງເອກະສານ, ຢ່າເດີນທາງ ກ່ອນກວດສອບໃຫ້ຊັດເຈນ." } },
+    MEDIUM: { name: { en: "Medium risk", lo: "ຄວາມສ່ຽງປານກາງ" }, color: "#B9770F", bg: "#FBF1E0", border: "#EBD6AE",
+      short: { en: "Some warning signs — verify the company and ask someone you trust first.", lo: "ມີສັນຍານເຕືອນ — ກວດສອບບໍລິສັດ ແລະ ປຶກສາຄົນທີ່ໄວ້ໃຈກ່ອນ." },
+      expl: { en: "This offer has some warning signs. Verify the company independently and talk to someone you trust before replying.", lo: "ຂໍ້ສະເໜີນີ້ມີສັນຍານເຕືອນບາງຢ່າງ. ກວດສອບບໍລິສັດດ້ວຍຕົນເອງ ແລະ ປຶກສາຄົນທີ່ໄວ້ໃຈກ່ອນຕອບ." } },
+    LOW: { name: { en: "Low risk", lo: "ຄວາມສ່ຽງຕໍ່າ" }, color: "#0E9E86", bg: "#E5F6F1", border: "#BEE6DC",
+      short: { en: "No common scam patterns — but always verify anyway.", lo: "ບໍ່ພົບຮູບແບບຫຼອກລວງທົ່ວໄປ — ແຕ່ຄວນກວດສອບສະເໝີ." },
+      expl: { en: "No common recruitment-scam patterns were detected. A low score is not a guarantee -- always verify a company before you commit or travel.", lo: "ບໍ່ພົບຮູບແບບການຫຼອກລວງທີ່ພົບເລື້ອຍ. ແຕ່ຄະແນນຕໍ່າບໍ່ແມ່ນການຮັບປະກັນ — ຄວນກວດສອບບໍລິສັດສະເໝີກ່ອນຕົກລົງ ຫຼື ເດີນທາງ." } }
+  }[level];
+  return Object.assign({ level: level, flags: flags, total: defs.length + extraFlags.length, score: score }, L2);
+}
+
+function buildShareText() {
+  const r = state.result;
+  if (!r) return "";
+  const flagNames = r.flags.map((f) => L(f.name)).join("; ");
+  if (state.lang === "lo") {
+    let s = "JobVerifAI — ຜົນການກວດສອບຂໍ້ສະເໜີວຽກ\n";
+    s += "ຜົນ: " + L(r.name) + " — ພົບ " + r.flags.length + " ຈາກ " + r.total + " ສັນຍານເຕືອນ.\n";
+    if (r.flags.length) s += "ສັນຍານ: " + flagNames + ".\n";
+    s += "ກະລຸນາເບິ່ງຂໍ້ສະເໜີນີ້ກັບຂ້ອຍ ກ່ອນຂ້ອຍຕອບ ຫຼື ເດີນທາງ.\n";
+    s += "ກວດສອບຂໍ້ສະເໜີວຽກຂອງເຈົ້າເອງ: " + window.location.href;
+    return s;
+  }
+  let s = "JobVerifAI — job offer verification result\n";
+  s += "Result: " + L(r.name) + " -- " + r.flags.length + " of " + r.total + " warning signs found.\n";
+  if (r.flags.length) s += "Signs: " + flagNames + ".\n";
+  s += "Please look at this offer with me before I reply or travel.\n";
+  s += "Check any job offer yourself: " + window.location.href;
+  return s;
+}
+
+/* ================= actions: check ================= */
+function goResult() { state.screen = "result"; state.copied = false; render(); window.scrollTo(0, 0); }
+function onAnalyzeText() {
+  const t = state.text.trim();
+  if (!t || state.analyzing) return;
+  state.analyzing = true; render();
+  setTimeout(() => { state.result = runAnalysis(t); state.analyzing = false; goResult(); }, 400);
+}
+function loadTesseract() {
+  if (tesseractLoadPromise) return tesseractLoadPromise;
+  tesseractLoadPromise = new Promise((resolve, reject) => {
+    if (window.Tesseract) { resolve(window.Tesseract); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    s.onload = () => resolve(window.Tesseract);
+    s.onerror = () => reject(new Error("load-failed"));
+    document.head.appendChild(s);
+  });
+  return tesseractLoadPromise;
+}
+function onImageSelected(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => { state.imgDataUrl = e.target.result; state.imgOcrText = ""; state.imgOcrError = ""; render(); };
+  reader.readAsDataURL(file);
+}
+async function onExtractFromImage() {
+  if (!state.imgDataUrl || state.imgOcrRunning) return;
+  state.imgOcrRunning = true; state.imgOcrProgress = 0; state.imgOcrError = ""; render();
+  try {
+    const Tesseract = await loadTesseract();
+    const result = await Tesseract.recognize(state.imgDataUrl, "lao+eng", {
+      logger: (m) => { if (m.status === "recognizing text" && typeof m.progress === "number") { state.imgOcrProgress = Math.round(m.progress * 100); render(); } }
+    });
+    state.imgOcrText = (result && result.data && result.data.text || "").trim();
+    state.imgOcrRunning = false; render();
+  } catch (e) { state.imgOcrRunning = false; state.imgOcrError = "ocrRead"; render(); }
+}
+function onAnalyzeImageText() {
+  const t = (state.imgOcrText || "").trim();
+  if (!t || state.analyzing) return;
+  state.analyzing = true; render();
+  setTimeout(() => { state.result = runAnalysis(t); state.analyzing = false; goResult(); }, 300);
+}
+async function onCheckLink() {
+  if (STATIC_ONLY) { state.linkError = "staticLink"; render(); return; }
+  const url = state.linkUrl.trim();
+  if (!url || state.linkFetching) return;
+  state.linkFetching = true; state.linkError = ""; render();
+  const preFlags = urlChecks(url);
+  try {
+    const resp = await fetch("/api/check-link", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: /^https?:\/\//i.test(url) ? url : "https://" + url }) });
+    const data = await resp.json();
+    state.linkFetching = false;
+    if (data.ok) { state.linkFetchedFrom = data.finalUrl || url; state.result = runAnalysis(data.text, preFlags); goResult(); }
+    else if (preFlags.length) { state.linkFetchedFrom = url; state.result = runAnalysis("", preFlags); state.result._linkOnly = true; goResult(); }
+    else { state.linkError = "linkGeneric"; render(); }
+  } catch (e) {
+    state.linkFetching = false;
+    if (preFlags.length) { state.linkFetchedFrom = url; state.result = runAnalysis("", preFlags); state.result._linkOnly = true; goResult(); }
+    else { state.linkError = "linkService"; render(); }
+  }
+}
+
+/* ================= actions: voice ================= */
+function pickRecorderMime() {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+  for (const c of candidates) { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c; }
+  return "";
+}
+async function onStartRecording() {
+  if (STATIC_ONLY) { state.voiceError = "staticVoice"; render(); return; }
+  if (state.voiceRecording) return;
+  state.voiceError = "";
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) { state.voiceError = "voiceUnsupported"; render(); return; }
+  try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { state.voiceError = "voiceMic"; render(); return; }
+  const mime = pickRecorderMime(); const chunks = [];
+  try { mediaRecorder = mime ? new MediaRecorder(mediaStream, { mimeType: mime }) : new MediaRecorder(mediaStream); }
+  catch (e) { mediaRecorder = new MediaRecorder(mediaStream); }
+  mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    if (state.voiceBlobUrl) URL.revokeObjectURL(state.voiceBlobUrl);
+    state.voiceBlob = blob; state.voiceBlobUrl = URL.createObjectURL(blob); state.voiceKind = "audio"; state.voiceRecording = false;
+    if (mediaStream) { mediaStream.getTracks().forEach((tr) => tr.stop()); mediaStream = null; }
+    render();
+  };
+  state.voiceRecording = true; state.voiceSeconds = 0; state.voiceText = ""; state.voiceError = ""; render();
+  mediaRecorder.start();
+  recordTimer = setInterval(() => { state.voiceSeconds += 1; if (state.voiceSeconds >= VOICE_MAX_SECONDS) onStopRecording(); else render(); }, 1000);
+}
+function onStopRecording() { clearInterval(recordTimer); recordTimer = null; if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop(); else state.voiceRecording = false; }
+function onVoiceFileSelected(file) {
+  if (!file) return;
+  if (STATIC_ONLY) { state.voiceError = "staticVoice"; render(); return; }
+  if (state.voiceBlobUrl) URL.revokeObjectURL(state.voiceBlobUrl);
+  state.voiceBlob = file; state.voiceBlobUrl = URL.createObjectURL(file);
+  state.voiceKind = file.type && file.type.startsWith("video") ? "video" : "audio";
+  state.voiceText = ""; state.voiceError = ""; render();
+}
+function onDiscardVoice() {
+  if (state.voiceBlobUrl) URL.revokeObjectURL(state.voiceBlobUrl);
+  state.voiceBlob = null; state.voiceBlobUrl = null; state.voiceKind = "";
+  state.voiceText = ""; state.voiceError = ""; state.voiceSeconds = 0; render();
+}
+async function onTranscribeVoice() {
+  if (!state.voiceBlob || state.voiceTranscribing) return;
+  if (state.voiceBlob.size > 4000000) { state.voiceError = "voiceTooLarge"; render(); return; }
+  state.voiceTranscribing = true; state.voiceError = ""; render();
+  try {
+    const resp = await fetch("/api/transcribe", { method: "POST", headers: { "Content-Type": state.voiceBlob.type || "audio/webm" }, body: state.voiceBlob });
+    const data = await resp.json();
+    state.voiceTranscribing = false;
+    if (data.ok) { state.voiceText = data.text || ""; render(); } else { state.voiceError = "voiceFail"; render(); }
+  } catch (e) { state.voiceTranscribing = false; state.voiceError = "voiceService"; render(); }
+}
+function onAnalyzeVoiceText() {
+  const t = (state.voiceText || "").trim();
+  if (!t || state.analyzing) return;
+  state.analyzing = true; render();
+  setTimeout(() => { state.result = runAnalysis(t); state.analyzing = false; goResult(); }, 300);
+}
+
+/* ================= actions: practice ================= */
+function onPracticeStart() {
+  state.practiceStarted = true; state.practiceStep = 0; state.practiceEnded = null;
+  state.practiceResult = null; state.practiceFeedback = null; render(); window.scrollTo(0, 0);
+}
+function onPracticeChoose(idx) {
+  const opt = PRACTICE_SCENARIO[state.practiceStep].options[idx];
+  state.practiceFeedback = opt.feedback;
+  if (opt.kind === "safe") {
+    state.practiceResult = runAnalysis(practiceLogUpTo(state.practiceStep));
+    state.practiceEnded = "good";
+  } else {
+    if (state.practiceStep >= PRACTICE_SCENARIO.length - 1) state.practiceEnded = "bad";
+    else state.practiceStep += 1;
+  }
+  render(); window.scrollTo(0, 0);
+}
+function onPracticeRestart() {
+  state.practiceStarted = false; state.practiceStep = 0; state.practiceEnded = null;
+  state.practiceResult = null; state.practiceFeedback = null; render(); window.scrollTo(0, 0);
+}
+function onPracticeGoToChecker() {
+  state.section = "check"; state.mode = "text"; state.screen = "input";
+  state.text = practiceLogUpTo(state.practiceStep); render(); window.scrollTo(0, 0);
+}
+
+/* ================= actions: voices ================= */
+function onSubmitVoice() {
+  const body = (state.voiceForm.body || "").trim();
+  if (!body) return;
+  const name = (state.voiceForm.name || "").trim();
+  state.voices.unshift({ seed: false, name: name || null, body: body });
+  state.voiceForm = { name: "", body: "" };
+  state.voiceJustShared = true;
+  render();
+}
+
+/* ================= actions: share/qr ================= */
+function onShare() { const text = buildShareText(); if (navigator.share) { navigator.share({ text: text }).catch(() => {}); } else { doCopy(); } }
+function doCopy() {
+  const text = buildShareText();
+  const done = () => { state.copied = true; render(); clearTimeout(copyTimer); copyTimer = setTimeout(() => { state.copied = false; render(); }, 2400); };
+  if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done).catch(() => legacyCopy(text, done)); }
+  else { legacyCopy(text, done); }
+}
+function legacyCopy(text, done) {
+  const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } catch (e) {}
+  document.body.removeChild(ta); done();
+}
+let qrLoadPromise = null;
+function loadQrLib() {
+  if (window.qrcode) return Promise.resolve(window.qrcode);
+  if (qrLoadPromise) return qrLoadPromise;
+  qrLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js";
+    s.onload = () => resolve(window.qrcode);
+    s.onerror = () => reject(new Error("qr-load-failed"));
+    document.head.appendChild(s);
+  });
+  return qrLoadPromise;
+}
+function paintQr(el) {
+  if (!el || el.dataset.done || !window.qrcode) return;
+  try {
+    const q = window.qrcode(0, "M"); q.addData(window.location.href); q.make();
+    el.innerHTML = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+    const svg = el.firstElementChild;
+    if (svg && svg.tagName && svg.tagName.toLowerCase() === "svg") { svg.style.width = "100%"; svg.style.height = "100%"; svg.style.display = "block"; }
+    el.dataset.done = "1";
+  } catch (e) { el.textContent = window.location.href; }
+}
+function drawQr(el) {
+  if (!el || el.dataset.done) return;
+  el.textContent = window.location.href;
+  loadQrLib().then(() => paintQr(el)).catch(() => { el.textContent = window.location.href; });
+}
+
+/* ================= render ================= */
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+const LOGO_SVG = '<svg width="42" height="42" viewBox="0 0 48 48" aria-hidden="true" style="display:block;flex:none;"><rect width="48" height="48" rx="13" fill="#0A2540"/><path d="M24 8.5 L37 13.2 V24.5 C37 32.6 31.2 37.8 24 40 C16.8 37.8 11 32.6 11 24.5 V13.2 Z" fill="#12AEC4"/><path d="M17.5 24 L22 28.5 L31 18.5" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const PHONE_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6.5 4h3l1.5 4-2 1.5a12 12 0 005.5 5.5l1.5-2 4 1.5v3a2 2 0 01-2 2A16 16 0 014.5 6a2 2 0 012-2z" fill="#ffffff"/></svg>';
+
+function callCard() {
+  return '<a href="tel:1362" style="text-decoration:none;display:block;">'
+    + '<div class="tap-lg" style="background:var(--navy);border-radius:20px;padding:18px;display:flex;align-items:center;gap:14px;color:#fff;box-shadow:var(--card-shadow);cursor:pointer;">'
+    + '<div style="width:56px;height:56px;border-radius:16px;background:var(--aqua);display:flex;align-items:center;justify-content:center;flex:none;">' + PHONE_SVG + "</div>"
+    + '<div style="flex:1;min-width:0;">'
+    + '<div style="font-size:13px;color:rgba(255,255,255,0.75);line-height:1.3;">' + esc(L(D.callTitle)) + "</div>"
+    + '<div style="font-size:34px;font-weight:800;letter-spacing:0.02em;line-height:1.1;">1362</div>'
+    + '<div style="font-size:12px;color:rgba(255,255,255,0.7);line-height:1.3;">' + esc(L(D.callSub)) + "</div>"
+    + "</div>"
+    + '<div style="background:var(--aqua);color:#fff;font-size:13.5px;font-weight:700;padding:11px 16px;border-radius:12px;flex:none;">' + esc(L(D.callNow)) + "</div>"
+    + "</div></a>";
+}
+function callBar() {
+  return '<a href="tel:1362" style="text-decoration:none;display:block;">'
+    + '<div class="tap" style="display:flex;align-items:center;gap:11px;background:var(--aqua-tint);border:1px solid var(--aqua-line);border-radius:14px;padding:11px 13px;cursor:pointer;">'
+    + '<div style="width:38px;height:38px;border-radius:11px;background:var(--navy);display:flex;align-items:center;justify-content:center;flex:none;">' + PHONE_SVG + "</div>"
+    + '<div style="flex:1;min-width:0;"><div style="font-size:12px;color:var(--muted);line-height:1.3;">' + esc(L(D.callShort)) + '</div><div style="font-size:18px;font-weight:800;color:var(--navy);line-height:1.15;">' + esc(L(D.callNow)) + ' 1362</div></div>'
+    + '<div style="font-size:11px;color:var(--aqua-700);font-weight:700;flex:none;">24/7</div>'
+    + "</div></a>";
+}
+
+function modeTabs() {
+  const tabs = [["text","📝",L(D.tabText)],["image","🖼️",L(D.tabImage)],["voice","🎙️",L(D.tabVoice)],["link","🔗",L(D.tabLink)]];
+  return '<div style="display:flex;gap:5px;background:var(--chip);border-radius:14px;padding:4px;margin-bottom:2px;">'
+    + tabs.map(([id, icon, label]) => { const active = state.mode === id;
+        return '<button data-mode="' + id + '" class="tap" style="flex:1;border:none;border-radius:11px;padding:9px 4px;font-size:12px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;background:' + (active ? "var(--aqua)" : "transparent") + ";color:" + (active ? "#ffffff" : "var(--muted)") + ';"><span style="font-size:17px;line-height:1;">' + icon + '</span><span>' + esc(label) + "</span></button>"; }).join("")
+    + "</div>";
+}
+function riskChip(r, big) {
+  const fs = big ? "18px" : "15px";
+  return '<div style="display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:11px 20px;font-size:' + fs + ';font-weight:700;background:' + r.bg + ";color:" + r.color + ";border:1.5px solid " + r.border + ';">'
+    + '<span style="width:11px;height:11px;border-radius:50%;flex:none;background:' + r.color + ';"></span><span>' + esc(L(r.name)) + "</span></div>";
+}
+
+function renderHome() {
+  let html = "";
+  // awareness hero
+  html += '<div style="background:var(--navy);border-radius:22px;padding:22px 20px;color:#fff;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;">'
+    + '<div style="font-size:20px;font-weight:800;line-height:1.35;">' + esc(L(D.homeHeroTitle)) + "</div>"
+    + '<div style="font-size:13.5px;line-height:1.65;color:rgba(255,255,255,0.85);">' + esc(L(D.homeHeroBody)) + "</div>"
+    + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:2px;">'
+    + '<div style="background:rgba(18,174,196,0.18);border:1px solid rgba(18,174,196,0.4);color:#bdeef5;font-size:12px;font-weight:600;border-radius:999px;padding:7px 12px;line-height:1.3;">' + esc(L(D.homeStat1)) + "</div>"
+    + '<div style="background:rgba(18,174,196,0.18);border:1px solid rgba(18,174,196,0.4);color:#bdeef5;font-size:12px;font-weight:600;border-radius:999px;padding:7px 12px;line-height:1.3;">' + esc(L(D.homeStat2)) + "</div>"
+    + "</div></div>";
+  // big call center
+  html += callCard();
+  // features
+  html += '<div style="font-size:14px;font-weight:700;color:var(--ink-strong);padding:2px 2px 0 2px;">' + esc(L(D.homeExplore)) + "</div>";
+  const feats = [
+    ["check", "🔎", L(D.featCheck), L(D.featCheckDesc)],
+    ["practice", "🎮", L(D.featPractice), L(D.featPracticeDesc)],
+    ["learn", "📚", L(D.featLearn), L(D.featLearnDesc)]
+  ];
+  html += '<div class="grid2">';
+  feats.forEach(([id, icon, title, desc]) => {
+    html += '<button data-goto="' + id + '" class="tap-lg" style="text-align:left;background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--card-shadow);cursor:pointer;display:flex;flex-direction:column;gap:8px;">'
+      + '<div style="width:42px;height:42px;border-radius:12px;background:var(--aqua-tint);display:flex;align-items:center;justify-content:center;font-size:22px;">' + icon + "</div>"
+      + '<div style="font-size:15.5px;font-weight:700;color:var(--ink-strong);">' + esc(title) + "</div>"
+      + '<div style="font-size:12.5px;line-height:1.55;color:var(--ink);flex:1;">' + esc(desc) + "</div>"
+      + '<div style="font-size:13px;font-weight:700;color:var(--aqua-700);">' + esc(L(D.openFeature)) + " →</div>"
+      + "</button>";
+  });
+  html += "</div>";
+  return html;
+}
+
+function renderPractice() {
+  let html = "";
+  if (!state.practiceStarted) {
+    html += '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:24px 18px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;text-align:center;align-items:center;">'
+      + '<div style="font-size:40px;">🎮</div>'
+      + '<div style="font-size:16.5px;font-weight:700;color:var(--ink-strong);">' + esc(L(D.pIntroTitle)) + "</div>"
+      + '<div style="font-size:13.5px;line-height:1.65;color:var(--ink);">' + esc(L(D.pIntroBody)) + "</div>"
+      + '<button id="btnPracticeStart" class="tap-lg" style="width:100%;min-height:54px;border:none;border-radius:14px;background:var(--aqua);color:#fff;font-size:16px;font-weight:700;cursor:pointer;">' + esc(L(D.pStart)) + "</button>"
+      + "</div>";
+    return html;
+  }
+  if (state.practiceEnded === "good") {
+    const r = state.practiceResult;
+    const stars = Math.max(1, PRACTICE_SCENARIO.length - state.practiceStep);
+    let starStr = ""; for (let i = 0; i < 3; i++) starStr += (i < stars ? "⭐" : "☆");
+    html += '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:24px 18px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;text-align:center;align-items:center;animation:jv-pop 0.4s ease;">'
+      + '<div style="font-size:44px;">🎉</div>'
+      + '<div style="font-size:17px;font-weight:800;color:var(--aqua-700);">' + esc(L(D.pGoodTitle)) + "</div>"
+      + '<div style="font-size:26px;letter-spacing:3px;">' + starStr + "</div>"
+      + '<div style="font-size:12px;color:var(--muted);margin-top:-6px;">' + esc(L(D.pStars)) + ": " + stars + "/3</div>"
+      + (state.practiceFeedback ? '<div style="font-size:13px;line-height:1.6;color:var(--ink);background:var(--aqua-tint);border-radius:12px;padding:10px 13px;">' + esc(L(state.practiceFeedback)) + "</div>" : "")
+      + '<div style="font-size:13.5px;line-height:1.65;color:var(--ink);">' + esc(L(D.pGoodBody)) + "</div>"
+      + (r ? '<div style="width:100%;display:flex;justify-content:center;">' + riskChip(r, false) + "</div>"
+          + '<div style="font-size:13px;color:var(--muted);">' + r.flags.length + " " + L(D.pGoodDetectB) + " " + r.total + " " + L(D.pGoodDetectC) + "</div>" : "")
+      + '<button id="btnPracticeGoChecker" class="tap-lg" style="width:100%;min-height:48px;border:none;border-radius:13px;background:var(--aqua);color:#fff;font-size:14.5px;font-weight:700;cursor:pointer;">' + esc(L(D.pSeeChecker)) + "</button>"
+      + '<button id="btnPracticeRestart" class="tap" style="width:100%;min-height:44px;border:1px solid var(--line);background:none;color:var(--muted);border-radius:13px;font-size:13.5px;font-weight:600;cursor:pointer;">' + esc(L(D.pPlayAgain)) + "</button>"
+      + "</div>";
+    return html;
+  }
+  if (state.practiceEnded === "bad") {
+    html += '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:20px 18px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;">'
+      + (state.practiceFeedback ? '<div style="font-size:13px;line-height:1.6;color:var(--warn-ink);background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:12px;padding:10px 13px;">' + esc(L(state.practiceFeedback)) + "</div>" : "")
+      + '<div style="font-size:15px;font-weight:700;color:#C63B3B;">' + esc(L(D.pBadTitle)) + "</div>"
+      + '<div style="font-size:13.5px;line-height:1.7;color:var(--ink);">' + esc(L(D.pBadBody1)) + "</div>"
+      + '<div style="font-size:13.5px;line-height:1.65;color:var(--ink);">' + esc(L(D.pBadBody2)) + "</div>"
+      + "</div>";
+    html += '<div style="background:var(--navy);border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:11px;color:#fff;">'
+      + '<div style="font-size:15px;font-weight:700;">' + esc(L(D.pHelpTitle)) + "</div>"
+      + '<div style="font-size:13px;line-height:1.6;color:rgba(255,255,255,0.85);">' + esc(L(D.pHelpBody)) + "</div>"
+      + "</div>";
+    html += '<button id="btnPracticeRestart" class="tap" style="width:100%;min-height:46px;border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:13px;font-size:13.5px;font-weight:600;cursor:pointer;">' + esc(L(D.pPlayAgain)) + "</button>";
+    return html;
+  }
+  // mid-scenario
+  const cur = PRACTICE_SCENARIO[state.practiceStep];
+  // progress dots
+  let dots = "";
+  for (let i = 0; i < PRACTICE_SCENARIO.length; i++) {
+    dots += '<div style="width:' + (i === state.practiceStep ? "22px" : "8px") + ';height:8px;border-radius:99px;background:' + (i <= state.practiceStep ? "var(--aqua)" : "var(--line)") + ';transition:all .2s;"></div>';
+  }
+  html += '<div style="display:flex;gap:6px;justify-content:center;align-items:center;">' + dots + "</div>";
+  if (state.practiceFeedback && state.practiceStep > 0) {
+    html += '<div style="font-size:12.5px;line-height:1.55;color:var(--warn-ink);background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:12px;padding:9px 12px;">💡 ' + esc(L(state.practiceFeedback)) + "</div>";
+  }
+  html += '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:8px;">'
+    + '<div style="font-size:12px;color:var(--muted);font-weight:600;">' + esc(L(D.pKeepIntro)) + "</div>"
+    + '<div style="display:flex;gap:9px;align-items:flex-start;">'
+    + '<div style="width:34px;height:34px;border-radius:50%;background:var(--aqua-tint);color:var(--aqua-700);display:flex;align-items:center;justify-content:center;font-weight:700;flex:none;">B</div>'
+    + '<div style="flex:1;background:var(--chip);border-radius:14px;padding:12px 14px;font-size:14px;line-height:1.65;color:var(--ink-strong);">' + esc(L(cur.msg)) + "</div>"
+    + "</div></div>";
+  html += '<div style="font-size:13px;font-weight:700;color:var(--ink-strong);text-align:center;padding-top:2px;">' + esc(L(D.pChoose)) + "</div>";
+  html += '<div style="display:flex;flex-direction:column;gap:9px;">'
+    + cur.options.map((opt, i) => {
+        const safe = opt.kind === "safe";
+        return '<button data-pchoice="' + i + '" class="tap-lg" style="width:100%;min-height:52px;border:1.5px solid ' + (safe ? "var(--aqua)" : "var(--line)") + ";background:" + (safe ? "var(--aqua-tint)" : "#fff") + ";color:" + (safe ? "var(--aqua-700)" : "var(--ink-strong)") + ';font-size:15px;font-weight:700;cursor:pointer;padding:10px 14px;">' + esc(L(opt.label)) + "</button>";
+      }).join("")
+    + "</div>";
+  return html;
+}
+
+function voiceCard(v, i) {
+  const nm = v.seed ? L(v.name) : (v.name || L(D.voicesAnon));
+  const bd = v.seed ? L(v.body) : v.body;
+  const initial = (nm && nm.trim()) ? nm.trim().charAt(0).toUpperCase() : "•";
+  const palette = [["#E7F6F9","#0B7E90"],["#EAF3F6","#0E3352"],["#E5F6F1","#0E9E86"]];
+  const pc = palette[i % palette.length];
+  return '<div style="position:relative;background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px 15px 14px 15px;box-shadow:var(--card-shadow);overflow:hidden;">'
+    + '<div aria-hidden="true" style="position:absolute;top:2px;right:12px;font-size:52px;line-height:1;color:' + pc[0] + ';font-family:Georgia,serif;">”</div>'
+    + '<div style="position:relative;display:flex;align-items:center;gap:9px;margin-bottom:8px;">'
+    + '<div style="width:30px;height:30px;border-radius:50%;background:' + pc[0] + ';color:' + pc[1] + ';display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex:none;">' + esc(initial) + "</div>"
+    + '<div style="font-size:12.5px;font-weight:700;color:' + pc[1] + ';">' + esc(nm) + "</div></div>"
+    + '<div style="position:relative;font-size:13.5px;line-height:1.65;color:var(--ink-strong);">' + esc(bd) + "</div>"
+    + "</div>";
+}
+
+function renderVoicesWall() {
+  const allVoices = state.voices.concat(SEED_VOICES);
+  let html = '<div style="display:flex;flex-direction:column;gap:14px;animation:jv-in 0.3s ease;">'
+    + '<button id="btnVoicesBack" class="tap" style="align-self:flex-start;border:none;background:none;color:var(--aqua-700);font-size:14.5px;font-weight:600;cursor:pointer;padding:8px 2px;min-height:40px;">← ' + esc(L(D.voicesBack)) + "</button>"
+    + '<div style="background:var(--navy);border-radius:20px;padding:20px;color:#fff;box-shadow:var(--card-shadow);">'
+    + '<div style="font-size:19px;font-weight:800;display:flex;align-items:center;gap:8px;">💬 ' + esc(L(D.voicesWallTitle)) + "</div>"
+    + '<div style="font-size:13px;color:rgba(255,255,255,0.8);line-height:1.5;margin-top:4px;">' + esc(L(D.voicesWallSub)) + "</div>"
+    + '<div style="display:inline-block;margin-top:10px;background:rgba(18,174,196,0.22);border:1px solid rgba(18,174,196,0.45);color:#bdeef5;font-size:12px;font-weight:700;border-radius:999px;padding:5px 12px;">'
+    + (state.lang === "lo" ? (L(D.voicesCountA) + " " + allVoices.length + " " + L(D.voicesCountB)) : (allVoices.length + " " + L(D.voicesCountB))) + "</div>"
+    + "</div>";
+  html += '<div class="grid2">';
+  allVoices.forEach((v, i) => { html += voiceCard(v, i); });
+  html += "</div>";
+  html += '<div style="font-size:11.5px;color:var(--muted-2);text-align:center;line-height:1.6;padding:0 12px;">' + esc(L(D.voicesDemoNote)) + "</div>";
+  html += "</div>";
+  return html;
+}
+
+function renderLearn() {
+  if (state.learnView === "wall") return renderVoicesWall();
+
+  let html = '<div style="font-size:13px;color:var(--muted);line-height:1.6;padding:2px 4px 4px 4px;">' + esc(L(D.learnIntro)) + "</div>";
+  html += '<div class="grid2">';
+  LEARN_RESOURCES.forEach((r) => {
+    const fallback = coverDataUri(r.icon || "📄", r.c1 || "#12AEC4", r.c2 || "#0B7E90", esc(L(r.org)).slice(0, 3).toUpperCase());
+    const src = r.img ? r.img : fallback;
+    html += '<div style="background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px;box-shadow:var(--card-shadow);display:flex;gap:12px;align-items:flex-start;">'
+      + '<img src="' + src + '" alt="" onerror="this.onerror=null;this.src=\'' + fallback + '\'" style="width:58px;height:81px;object-fit:cover;border-radius:9px;border:1px solid var(--line);flex:none;background:var(--chip);">'
+      + '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;">'
+      + '<div style="font-size:11px;font-weight:700;color:var(--muted-2);text-transform:uppercase;letter-spacing:0.03em;">' + esc(L(r.org)) + "</div>"
+      + '<div style="font-size:14px;font-weight:700;line-height:1.4;color:var(--ink-strong);">' + esc(L(r.title)) + "</div>"
+      + '<div style="font-size:12.5px;color:var(--ink);line-height:1.55;">' + esc(L(r.desc)) + "</div>"
+      + '<a href="' + esc(r.link) + '" target="_blank" rel="noopener" style="font-size:12.5px;font-weight:700;color:var(--aqua-700);text-decoration:none;margin-top:2px;">' + esc(L(D.viewSource)) + " →</a>"
+      + "</div></div>";
+  });
+  html += "</div>";
+
+  const total = state.voices.length + SEED_VOICES.length;
+  html += '<div style="margin-top:6px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px 16px 18px 16px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;">'
+    + '<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:20px;">💬</span><span style="font-size:15.5px;font-weight:700;color:var(--ink-strong);">' + esc(L(D.voicesTitle)) + "</span></div>"
+    + '<div style="font-size:12px;color:var(--muted);line-height:1.6;">' + esc(L(D.voicesIntro)) + "</div>";
+  if (state.voiceJustShared) {
+    html += '<div style="font-size:13px;font-weight:600;color:var(--aqua-700);background:var(--aqua-tint);border-radius:12px;padding:11px 13px;display:flex;align-items:center;gap:8px;">✅ ' + esc(L(D.voicesThanks)) + "</div>";
+  }
+  // preview: newest 2 voices
+  const preview = state.voices.concat(SEED_VOICES).slice(0, 2);
+  preview.forEach((v, i) => { html += voiceCard(v, i); });
+  html += '<button id="btnVoicesViewAll" class="tap-lg" style="width:100%;min-height:46px;border:1.5px solid var(--aqua);background:var(--aqua-tint);color:var(--aqua-700);border-radius:13px;font-size:14px;font-weight:700;cursor:pointer;">' + esc(L(D.voicesViewAll)) + " (" + total + ") →</button>";
+  html += '<div style="display:flex;flex-direction:column;gap:9px;border-top:1px solid var(--line);padding-top:12px;">'
+    + '<input id="voiceName" type="text" placeholder="' + esc(L(D.voicesNamePh)) + '" value="' + esc(state.voiceForm.name) + '" style="width:100%;padding:11px 12px;font-size:14px;border:1.5px solid var(--line);border-radius:12px;background:var(--field);color:var(--ink-strong);">'
+    + '<textarea id="voiceBody" rows="3" placeholder="' + esc(L(D.voicesBodyPh)) + '" style="width:100%;min-height:74px;padding:11px 12px;font-size:14px;line-height:1.55;border:1.5px solid var(--line);border-radius:12px;background:var(--field);color:var(--ink-strong);resize:vertical;">' + esc(state.voiceForm.body) + "</textarea>"
+    + '<button id="btnSubmitVoice" class="tap-lg" style="width:100%;min-height:48px;border:none;border-radius:13px;background:var(--aqua);color:#fff;font-size:15px;font-weight:700;cursor:pointer;">' + esc(L(D.voicesSubmit)) + "</button>"
+    + "</div>"
+    + "</div>";
+  return html;
+}
+
+function render() {
+  const app = document.getElementById("app");
+  let html = '<div class="wrap"><div class="inner">';
+
+  // header
+  html += '<header style="display:flex;align-items:center;gap:12px;">'
+    + LOGO_SVG
+    + '<div style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;">'
+    + '<div style="display:flex;align-items:baseline;gap:1px;"><span style="font-size:21px;font-weight:800;letter-spacing:-0.01em;color:var(--navy);">JobVerif</span><span style="font-size:21px;font-weight:800;letter-spacing:-0.01em;color:var(--aqua);">AI</span></div>'
+    + '<div style="font-size:12.5px;color:var(--muted);line-height:1.4;">' + esc(L(D.appTagline)) + "</div>"
+    + "</div>"
+    + '<div style="display:flex;background:var(--chip);border-radius:999px;padding:3px;flex:none;">'
+    + '<button data-lang="lo" class="tap" style="border:none;border-radius:999px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer;background:' + (state.lang === "lo" ? "var(--aqua)" : "transparent") + ";color:" + (state.lang === "lo" ? "#fff" : "var(--muted)") + ';">ລາວ</button>'
+    + '<button data-lang="en" class="tap" style="border:none;border-radius:999px;padding:6px 11px;font-size:11.5px;font-weight:700;cursor:pointer;background:' + (state.lang === "en" ? "var(--aqua)" : "transparent") + ";color:" + (state.lang === "en" ? "#fff" : "var(--muted)") + ';">EN</button>'
+    + "</div></header>";
+
+  // nav (4 pillars)
+  html += '<div style="display:flex;gap:0;border-bottom:2px solid var(--line);">'
+    + [["home", L(D.navHome)], ["check", L(D.navCheck)], ["practice", L(D.navPractice)], ["learn", L(D.navLearn)]].map(([id, label]) => {
+        const active = state.section === id;
+        return '<button data-section="' + id + '" class="tap" style="flex:1;border:none;background:none;padding:11px 2px 13px 2px;font-size:13.5px;font-weight:700;cursor:pointer;color:' + (active ? "var(--aqua-700)" : "var(--muted-2)") + ";border-bottom:3px solid " + (active ? "var(--aqua)" : "transparent") + ";margin-bottom:-2px;" + '">' + esc(label) + "</button>";
+      }).join("")
+    + "</div>";
+
+  if (state.section === "home") { html += renderHome(); }
+
+  if (state.section === "check") {
+    if (state.screen !== "detail") html += callBar();
+
+    if (state.screen === "input") {
+      html += '<button id="btnHelp" class="tap" style="align-self:flex-start;border:none;background:none;color:var(--aqua-700);font-size:12.5px;font-weight:600;cursor:pointer;padding:0;">' + (state.helpOpen ? "▾ " : "▸ ") + esc(L(D.helpToggle)) + "</button>";
+      if (state.helpOpen) html += '<div style="font-size:12.5px;color:var(--ink);line-height:1.65;background:var(--aqua-tint);border-radius:12px;padding:11px 14px;margin-top:-8px;">' + esc(L(D.helpBody)) + "</div>";
+      html += modeTabs();
+
+      if (state.mode === "text") {
+        const empty = !state.text.trim();
+        html += '<div style="display:flex;flex-direction:column;gap:14px;">'
+          + '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;">'
+          + '<div style="font-size:14.5px;font-weight:600;color:var(--ink-strong);">' + esc(L(D.textPrompt)) + "</div>"
+          + '<textarea id="offerText" rows="7" placeholder="' + esc(L(D.textPlaceholder)) + '" style="width:100%;min-height:170px;border:1.5px solid var(--line);border-radius:14px;padding:12px 13px;font-size:16px;line-height:1.55;color:var(--ink-strong);background:var(--field);resize:vertical;">' + esc(state.text) + "</textarea>"
+          + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">'
+          + '<button id="btnExample" class="tap" style="border:1px solid var(--aqua-line);background:var(--aqua-tint);color:var(--aqua-700);border-radius:999px;padding:9px 15px;font-size:13.5px;font-weight:600;cursor:pointer;min-height:38px;">' + esc(L(D.tryExample)) + "</button>"
+          + '<button id="btnClear" class="tap" style="border:none;background:none;color:var(--muted);border-radius:999px;padding:9px 10px;font-size:13.5px;cursor:pointer;min-height:38px;">' + esc(L(D.clear)) + "</button>"
+          + "</div>"
+          + '<button id="btnAnalyze" class="tap" ' + (state.analyzing || empty ? "disabled" : "") + ' style="width:100%;min-height:54px;border:none;border-radius:14px;background:var(--aqua);color:#fff;font-size:16.5px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;opacity:' + (state.analyzing || empty ? 0.45 : 1) + ';">'
+          + (state.analyzing ? "<span>" + esc(L(D.analyzing)) + '</span><span style="display:inline-flex;gap:4px;"><span style="width:6px;height:6px;border-radius:50%;background:#fff;animation:jv-dot 1.2s infinite;"></span><span style="width:6px;height:6px;border-radius:50%;background:#fff;animation:jv-dot 1.2s infinite 0.2s;"></span><span style="width:6px;height:6px;border-radius:50%;background:#fff;animation:jv-dot 1.2s infinite 0.4s;"></span></span>' : "<span>" + esc(L(D.analyzeOffer)) + "</span>")
+          + "</button></div>"
+          + '<div style="font-size:12.5px;color:var(--muted);text-align:center;line-height:1.55;padding:0 8px;">' + esc(L(D.textPrivacy)) + "</div>"
+          + "</div>";
+      }
+
+      if (state.mode === "image") {
+        html += '<div style="display:flex;flex-direction:column;gap:14px;">'
+          + '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;">'
+          + '<div style="font-size:14.5px;font-weight:600;color:var(--ink-strong);">' + esc(L(D.imagePrompt)) + "</div>";
+        if (state.imgDataUrl) html += '<img src="' + state.imgDataUrl + '" style="width:100%;border-radius:12px;border:1px solid var(--line);max-height:260px;object-fit:contain;background:#fafafa;">';
+        html += '<input id="imgFileInput" type="file" accept="image/*" style="font-size:13px;">';
+        if (!state.imgDataUrl) html += '<div style="font-size:12.5px;color:var(--muted);line-height:1.55;">' + esc(L(D.imageSupports)) + "</div>";
+        else if (!state.imgOcrText && !state.imgOcrRunning) html += '<button id="btnExtract" class="tap" style="width:100%;min-height:50px;border:none;border-radius:14px;background:var(--aqua);color:#fff;font-size:15px;font-weight:700;cursor:pointer;">' + esc(L(D.readText)) + "</button>";
+        else if (state.imgOcrRunning) html += '<div style="display:flex;flex-direction:column;gap:8px;align-items:center;padding:10px 0;"><div style="width:100%;height:8px;background:var(--chip);border-radius:99px;overflow:hidden;"><div style="height:100%;width:' + state.imgOcrProgress + '%;background:var(--aqua);transition:width 0.2s;"></div></div><div style="font-size:13px;color:var(--muted);">' + esc(L(D.readingText)) + " " + state.imgOcrProgress + "%</div></div>";
+        if (state.imgOcrError) html += '<div style="font-size:13px;color:#C63B3B;background:#FBEAEA;border-radius:10px;padding:10px 12px;">' + esc(errText(state.imgOcrError)) + "</div>";
+        if (state.imgOcrText) html += '<div style="font-size:13px;font-weight:600;color:var(--ink);">' + esc(L(D.textWeRead)) + '</div><textarea id="ocrTextArea" rows="6" style="width:100%;min-height:130px;border:1.5px solid var(--line);border-radius:14px;padding:12px 13px;font-size:15px;line-height:1.5;color:var(--ink-strong);background:var(--field);resize:vertical;">' + esc(state.imgOcrText) + '</textarea><button id="btnAnalyzeImg" class="tap" ' + (state.analyzing ? "disabled" : "") + ' style="width:100%;min-height:54px;border:none;border-radius:14px;background:var(--aqua);color:#fff;font-size:16.5px;font-weight:700;cursor:pointer;">' + esc(L(D.analyzeText)) + "</button>";
+        html += "</div>" + '<div style="font-size:12.5px;color:var(--muted);text-align:center;line-height:1.55;padding:0 8px;">' + esc(L(D.imagePrivacy)) + "</div></div>";
+      }
+
+      if (state.mode === "voice") {
+        html += '<div style="display:flex;flex-direction:column;gap:14px;">'
+          + '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;">'
+          + '<div style="font-size:14.5px;font-weight:600;color:var(--ink-strong);">' + esc(L(D.voicePrompt)) + "</div>"
+          + (STATIC_ONLY ? staticBanner() : "");
+        if (!state.voiceBlob && !state.voiceRecording) html += '<div style="display:flex;gap:9px;"><button id="btnRecord" class="tap" style="flex:1;min-height:64px;border:none;border-radius:14px;background:var(--aqua);color:#fff;font-size:14px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;"><span style="font-size:20px;">🎙️</span><span>' + esc(L(D.record)) + '</span></button><label for="voiceFileInput" class="tap" style="flex:1;min-height:64px;border:1.5px solid var(--aqua-line);border-radius:14px;background:var(--aqua-tint);color:var(--aqua-700);font-size:14px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;"><span style="font-size:20px;">📁</span><span>' + esc(L(D.upload)) + '</span></label><input id="voiceFileInput" type="file" accept="audio/*,video/*" style="display:none;"></div><div style="font-size:12.5px;color:var(--muted);line-height:1.55;">' + esc(L(D.voiceHint)) + "</div>";
+        if (state.voiceRecording) html += '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 0;"><div style="width:22px;height:22px;border-radius:50%;background:#C63B3B;animation:jv-dot 1s infinite;"></div><div style="font-size:22px;font-weight:700;color:var(--ink-strong);">' + String(Math.floor(state.voiceSeconds/60)).padStart(2,"0") + ":" + String(state.voiceSeconds%60).padStart(2,"0") + ' / 01:00</div><button id="btnStopRecord" class="tap" style="min-height:50px;padding:0 26px;border:none;border-radius:14px;background:#C63B3B;color:#fff;font-size:15px;font-weight:700;cursor:pointer;">■ ' + esc(L(D.stop)) + "</button></div>";
+        if (state.voiceBlob && !state.voiceRecording) {
+          html += (state.voiceKind === "video" ? '<video src="' + state.voiceBlobUrl + '" controls style="width:100%;border-radius:12px;max-height:220px;background:#000;"></video>' : '<audio src="' + state.voiceBlobUrl + '" controls style="width:100%;"></audio>')
+            + '<div style="display:flex;gap:9px;"><button id="btnDiscardVoice" class="tap" style="flex:1;min-height:44px;border:1px solid var(--line);background:none;color:var(--muted);border-radius:12px;font-size:13.5px;font-weight:600;cursor:pointer;">' + esc(L(D.discard)) + "</button>";
+          if (!state.voiceText) html += '<button id="btnTranscribe" class="tap" ' + (state.voiceTranscribing ? "disabled" : "") + ' style="flex:2;min-height:44px;border:none;background:var(--aqua);color:#fff;border-radius:12px;font-size:13.5px;font-weight:700;cursor:pointer;opacity:' + (state.voiceTranscribing ? 0.6 : 1) + ';">' + (state.voiceTranscribing ? esc(L(D.transcribing)) : esc(L(D.transcribe))) + "</button>";
+          html += "</div>";
+        }
+        if (state.voiceError) html += '<div style="font-size:13px;color:#C63B3B;background:#FBEAEA;border-radius:10px;padding:10px 12px;">' + esc(errText(state.voiceError)) + "</div>";
+        if (state.voiceText) html += '<div style="font-size:13px;font-weight:600;color:var(--ink);">' + esc(L(D.transcript)) + '</div><textarea id="voiceTextArea" rows="6" style="width:100%;min-height:130px;border:1.5px solid var(--line);border-radius:14px;padding:12px 13px;font-size:15px;line-height:1.5;color:var(--ink-strong);background:var(--field);resize:vertical;">' + esc(state.voiceText) + '</textarea><button id="btnAnalyzeVoice" class="tap" ' + (state.analyzing ? "disabled" : "") + ' style="width:100%;min-height:54px;border:none;border-radius:14px;background:var(--aqua);color:#fff;font-size:16.5px;font-weight:700;cursor:pointer;">' + esc(L(D.analyzeText)) + "</button>";
+        html += "</div>" + '<div style="font-size:12.5px;color:var(--muted);text-align:center;line-height:1.55;padding:0 8px;">' + esc(L(D.voicePrivacy)) + "</div></div>";
+      }
+
+      if (state.mode === "link") {
+        html += '<div style="display:flex;flex-direction:column;gap:14px;">'
+          + '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;">'
+          + '<div style="font-size:14.5px;font-weight:600;color:var(--ink-strong);">' + esc(L(D.linkPrompt)) + "</div>"
+          + (STATIC_ONLY ? staticBanner() : "")
+          + '<input id="linkInput" type="url" inputmode="url" placeholder="' + esc(L(D.linkPlaceholder)) + '" value="' + esc(state.linkUrl) + '" style="width:100%;padding:14px 13px;font-size:15px;border:1.5px solid var(--line);border-radius:14px;background:var(--field);color:var(--ink-strong);">'
+          + '<div style="display:flex;flex-wrap:wrap;gap:8px;">'
+          + '<button id="btnExampleLink" class="tap" style="border:1px solid var(--aqua-line);background:var(--aqua-tint);color:var(--aqua-700);border-radius:999px;padding:9px 15px;font-size:13.5px;font-weight:600;cursor:pointer;min-height:38px;">' + esc(L(D.tryExample)) + "</button>"
+          + '<button id="btnExampleTikTok" class="tap" style="border:1px solid var(--aqua-line);background:var(--aqua-tint);color:var(--aqua-700);border-radius:999px;padding:9px 15px;font-size:13.5px;font-weight:600;cursor:pointer;min-height:38px;">' + esc(L(D.tiktokExample)) + "</button>"
+          + "</div>"
+          + '<button id="btnCheckLink" class="tap" ' + (state.linkFetching || !state.linkUrl.trim() ? "disabled" : "") + ' style="width:100%;min-height:54px;border:none;border-radius:14px;background:var(--aqua);color:#fff;font-size:16.5px;font-weight:700;cursor:pointer;opacity:' + (state.linkFetching || !state.linkUrl.trim() ? 0.45 : 1) + ';">' + (state.linkFetching ? esc(L(D.checkingLink)) : esc(L(D.checkLink))) + "</button>";
+        if (state.linkError) html += '<div style="font-size:13px;color:#C63B3B;background:#FBEAEA;border-radius:10px;padding:10px 12px;">' + esc(errText(state.linkError)) + "</div>";
+        html += "</div>" + '<div style="font-size:12.5px;color:var(--muted);text-align:center;line-height:1.55;padding:0 8px;">' + esc(L(D.linkPrivacy)) + "</div></div>";
+      }
+    }
+
+    // minimal result
+    if (state.screen === "result" && state.result) {
+      const r = state.result;
+      const patternsLine = state.lang === "lo" ? (L(D.patternsA) + " " + r.flags.length + " " + L(D.patternsB) + " " + r.total + " " + L(D.patternsC)) : (r.flags.length + " " + L(D.patternsB) + " " + r.total + " " + L(D.patternsC));
+      html += '<div style="display:flex;flex-direction:column;gap:14px;animation:jv-in 0.35s ease;">'
+        + '<button id="btnBack" class="tap" style="align-self:flex-start;border:none;background:none;color:var(--aqua-700);font-size:14.5px;font-weight:600;cursor:pointer;padding:8px 2px;min-height:40px;">← ' + esc(L(D.checkAnother)) + "</button>";
+      if (r._linkOnly) html += '<div style="font-size:13px;color:var(--warn-ink);background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:10px;padding:10px 12px;">' + esc(L(D.linkOnlyNote)) + "</div>";
+      else if (state.mode === "link" && state.linkFetchedFrom) html += '<div style="font-size:12px;color:var(--muted);word-break:break-all;">' + esc(L(D.checkedLabel)) + " " + esc(state.linkFetchedFrom) + "</div>";
+      html += '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:24px 18px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;">'
+        + riskChip(r, true)
+        + '<div style="font-size:13px;color:var(--muted);">' + esc(patternsLine) + "</div>"
+        + '<div style="font-size:14.5px;line-height:1.6;color:var(--ink-strong);">' + esc(L(r.short)) + "</div>"
+        + '<button id="btnDetails" class="tap-lg" style="width:100%;min-height:50px;border:none;border-radius:13px;background:var(--aqua);color:#fff;font-size:15px;font-weight:700;cursor:pointer;">' + esc(L(D.viewDetails)) + " →</button>"
+        + '<button id="btnShareQuick" class="tap" style="width:100%;min-height:46px;border:1.5px solid var(--line);background:none;color:var(--navy);font-size:14px;font-weight:600;border-radius:13px;cursor:pointer;">' + esc(L(D.shareContact)) + "</button>"
+        + "</div></div>";
+    }
+
+    // detail page
+    if (state.screen === "detail" && state.result) {
+      const r = state.result;
+      html += '<div style="display:flex;flex-direction:column;gap:14px;animation:jv-in 0.3s ease;">'
+        + '<button id="btnBackResult" class="tap" style="align-self:flex-start;border:none;background:none;color:var(--aqua-700);font-size:14.5px;font-weight:600;cursor:pointer;padding:8px 2px;min-height:40px;">← ' + esc(L(D.backToResult)) + "</button>"
+        + '<div style="display:flex;justify-content:center;">' + riskChip(r, false) + "</div>"
+        + '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:18px;box-shadow:var(--card-shadow);font-size:14px;line-height:1.65;color:var(--ink-strong);">' + esc(L(r.expl)) + "</div>";
+      if (r.flags.length) {
+        html += '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px 18px 6px 18px;box-shadow:var(--card-shadow);"><div style="font-size:14.5px;font-weight:700;padding-bottom:10px;color:var(--ink-strong);">' + esc(L(D.warningsFound)) + "</div>";
+        r.flags.forEach((f) => {
+          html += '<div style="display:flex;gap:11px;padding:12px 0;border-top:1px solid var(--line);"><div style="width:8px;height:8px;border-radius:50%;margin-top:7px;flex:none;background:' + r.color + ';"></div><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;"><div style="font-size:14.5px;font-weight:700;color:var(--ink-strong);">' + esc(L(f.name)) + '</div><div style="font-size:13px;line-height:1.55;color:var(--ink);">' + esc(L(f.why)) + "</div>" + (f.hasSnippet ? '<div style="font-size:12px;color:var(--muted);background:var(--chip);border-radius:8px;padding:5px 9px;margin-top:4px;font-family:ui-monospace,Menlo,Consolas,monospace;">' + esc(L(D.foundLabel)) + ' "' + esc(f.snippet) + '"</div>' : "") + "</div></div>";
+        });
+        html += "</div>";
+      }
+      const steps = [
+        { lo: ["ກວດສອບບໍລິສັດດ້ວຍຕົນເອງ", "ຄົ້ນຫາຊື່ບໍລິສັດພ້ອມຄຳວ່າ scam. ຊອກຫາເວັບໄຊທາງການ, ທີ່ຢູ່ ແລະ ເບີໂທ — ບໍ່ແມ່ນພຽງບັນຊີແຊັດ."], en: ["Verify the company independently.", "Search the company name plus the word scam. Look for an official website, address, and phone number -- not just a chat account."] },
+        { lo: ["ຢ່າຈ່າຍເງິນລ່ວງໜ້າ", "ບໍ່ມີນາຍຈ້າງແທ້ຄົນໃດເກັບຄ່າມັດຈຳ, ຄ່າຝຶກອົບຮົມ ຫຼື ຄ່າເອກະສານເພື່ອໃຫ້ວຽກເຈົ້າ."], en: ["Never pay upfront fees.", "No real employer charges you a deposit, training fee, or document fee to give you a job."] },
+        { lo: ["ຢ່າມອບໜັງສືຜ່ານແດນ", "ຖືເອກະສານຂອງເຈົ້າເອງ. ນາຍຈ້າງທີ່ “ຮັກສາໃຫ້” ຄວບຄຸມວ່າເຈົ້າຈະອອກໄປໄດ້ຫຼືບໍ່."], en: ["Never hand over your passport.", "Keep your own documents. An employer who keeps it safe for you controls whether you can leave."] },
+        { lo: ["ບອກຄົນອື່ນກ່ອນເດີນທາງ", "ບອກໃຫ້ຊັດເຈນວ່າເຈົ້າຈະໄປໃສ ແລະ ໃຜເປັນຄົນຊວນ. ຢູ່ລາວ, ສາຍດ່ວນສະຫະພັນແມ່ຍິງລາວ ແມ່ນ <strong>1362</strong> (24 ຊົ່ວໂມງ)."], en: ["Tell someone before you travel.", "Share exactly where you are going and who invited you. In Laos, the Lao Women's Union hotline is <strong>1362</strong> (24/7)."] }
+      ];
+      html += '<div style="background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px 18px;box-shadow:var(--card-shadow);display:flex;flex-direction:column;gap:12px;"><div style="font-size:14.5px;font-weight:700;color:var(--ink-strong);">' + esc(L(D.whatToDo)) + "</div>"
+        + steps.map((step, i) => { const s = state.lang === "lo" ? step.lo : step.en; return '<div style="display:flex;gap:11px;"><div style="width:24px;height:24px;border-radius:50%;background:var(--aqua-tint);color:var(--aqua-700);font-size:12.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;">' + (i + 1) + '</div><div style="font-size:13.5px;line-height:1.6;color:var(--ink);"><strong style="color:var(--ink-strong);">' + esc(s[0]) + ".</strong> " + s[1] + "</div></div>"; }).join("")
+        + "</div>";
+      html += '<div style="background:var(--navy);border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:11px;color:#fff;">'
+        + '<div style="font-size:15px;font-weight:700;">' + esc(L(D.tellTitle)) + "</div>"
+        + '<div style="font-size:13px;line-height:1.6;color:rgba(255,255,255,0.85);">' + esc(L(D.tellBody)) + "</div>"
+        + '<button id="btnShare" class="tap-lg" style="width:100%;min-height:52px;border:none;border-radius:13px;background:#fff;color:var(--navy);font-size:15.5px;font-weight:700;cursor:pointer;">' + esc(L(D.shareContact)) + "</button>"
+        + '<button id="btnCopy" class="tap-lg" style="width:100%;min-height:46px;border:1.5px solid rgba(255,255,255,0.4);border-radius:13px;background:none;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">' + (state.copied ? esc(L(D.copied)) : esc(L(D.copyMessage))) + "</button>"
+        + "</div></div>";
+    }
+  }
+
+  if (state.section === "practice") { html += callBar(); html += renderPractice(); }
+  if (state.section === "learn") { html += renderLearn(); }
+
+  // footer
+  html += '<footer style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">'
+    + '<button id="btnQr" class="tap-lg" style="width:100%;min-height:48px;border:1.5px solid var(--line);border-radius:14px;background:#fff;color:var(--ink);font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;">'
+    + '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="0" y="0" width="6" height="6" fill="#0A2540"></rect><rect x="10" y="0" width="6" height="6" fill="#0A2540"></rect><rect x="0" y="10" width="6" height="6" fill="#0A2540"></rect><rect x="10" y="10" width="3" height="3" fill="#0A2540"></rect><rect x="13" y="13" width="3" height="3" fill="#0A2540"></rect></svg>'
+    + "<span>" + esc(L(D.shareTool)) + "</span></button>"
+    + '<div style="font-size:11.5px;color:var(--muted-2);text-align:center;line-height:1.6;padding:0 10px;">' + esc(L(D.disclaimer)) + "</div>"
+    + "</footer>";
+
+  html += "</div></div>";
+
+  if (state.qrOpen) {
+    html += '<div id="qrModal" style="position:fixed;inset:0;background:rgba(10,37,64,0.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;">'
+      + '<div id="qrCard" style="background:#fff;border-radius:20px;padding:22px;width:100%;max-width:320px;display:flex;flex-direction:column;gap:13px;align-items:center;animation:jv-in 0.25s ease;">'
+      + '<div style="font-size:16px;font-weight:700;text-align:center;color:var(--ink-strong);">' + esc(L(D.qrTitle)) + "</div>"
+      + '<div style="font-size:13px;color:var(--muted);text-align:center;margin-top:-8px;">' + esc(L(D.qrSub)) + "</div>"
+      + '<div id="qrCanvas" style="width:212px;height:212px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--ink);word-break:break-all;text-align:center;"></div>'
+      + '<div style="font-size:11px;color:var(--muted-2);word-break:break-all;text-align:center;font-family:ui-monospace,Menlo,Consolas,monospace;max-width:100%;">' + esc(window.location.href) + "</div>"
+      + '<button id="btnQrClose" class="tap" style="width:100%;min-height:46px;border:none;border-radius:12px;background:var(--chip);color:var(--ink-strong);font-size:14.5px;font-weight:700;cursor:pointer;">' + esc(L(D.close)) + "</button>"
+      + "</div></div>";
+  }
+
+  app.innerHTML = html;
+  document.documentElement.lang = state.lang;
+  bind();
+}
+
+function bind() {
+  const $ = (id) => document.getElementById(id);
+  document.querySelectorAll("[data-mode]").forEach((btn) => btn.addEventListener("click", () => { state.mode = btn.getAttribute("data-mode"); render(); }));
+  document.querySelectorAll("[data-lang]").forEach((btn) => btn.addEventListener("click", () => { state.lang = btn.getAttribute("data-lang"); render(); }));
+  document.querySelectorAll("[data-section]").forEach((btn) => btn.addEventListener("click", () => { state.section = btn.getAttribute("data-section"); state.learnView = "main"; state.voiceJustShared = false; render(); window.scrollTo(0, 0); }));
+  document.querySelectorAll("[data-goto]").forEach((btn) => btn.addEventListener("click", () => { state.section = btn.getAttribute("data-goto"); render(); window.scrollTo(0, 0); }));
+  document.querySelectorAll("[data-pchoice]").forEach((btn) => btn.addEventListener("click", () => onPracticeChoose(parseInt(btn.getAttribute("data-pchoice"), 10))));
+
+  if ($("btnHelp")) $("btnHelp").addEventListener("click", () => { state.helpOpen = !state.helpOpen; render(); });
+  if ($("btnPracticeStart")) $("btnPracticeStart").addEventListener("click", onPracticeStart);
+  if ($("btnPracticeRestart")) $("btnPracticeRestart").addEventListener("click", onPracticeRestart);
+  if ($("btnPracticeGoChecker")) $("btnPracticeGoChecker").addEventListener("click", onPracticeGoToChecker);
+
+  const offerText = $("offerText");
+  if (offerText) { offerText.addEventListener("input", (e) => { state.text = e.target.value; syncTextButton(); }); offerText.focus(); offerText.setSelectionRange(offerText.value.length, offerText.value.length); }
+  if ($("btnExample")) $("btnExample").addEventListener("click", () => { state.text = example(); render(); });
+  if ($("btnClear")) $("btnClear").addEventListener("click", () => { state.text = ""; render(); });
+  if ($("btnAnalyze")) $("btnAnalyze").addEventListener("click", onAnalyzeText);
+
+  if ($("imgFileInput")) $("imgFileInput").addEventListener("change", (e) => onImageSelected(e.target.files[0]));
+  if ($("btnExtract")) $("btnExtract").addEventListener("click", onExtractFromImage);
+  if ($("ocrTextArea")) $("ocrTextArea").addEventListener("input", (e) => { state.imgOcrText = e.target.value; });
+  if ($("btnAnalyzeImg")) $("btnAnalyzeImg").addEventListener("click", onAnalyzeImageText);
+
+  const linkInput = $("linkInput");
+  if (linkInput) { linkInput.addEventListener("input", (e) => { state.linkUrl = e.target.value; syncLinkButton(); }); linkInput.focus(); linkInput.setSelectionRange(linkInput.value.length, linkInput.value.length); }
+  if ($("btnExampleLink")) $("btnExampleLink").addEventListener("click", () => { state.linkUrl = exampleLink(); render(); });
+  if ($("btnExampleTikTok")) $("btnExampleTikTok").addEventListener("click", () => { state.linkUrl = exampleTikTok(); render(); });
+  if ($("btnCheckLink")) $("btnCheckLink").addEventListener("click", onCheckLink);
+
+  if ($("btnRecord")) $("btnRecord").addEventListener("click", onStartRecording);
+  if ($("btnStopRecord")) $("btnStopRecord").addEventListener("click", onStopRecording);
+  if ($("voiceFileInput")) $("voiceFileInput").addEventListener("change", (e) => onVoiceFileSelected(e.target.files[0]));
+  if ($("btnDiscardVoice")) $("btnDiscardVoice").addEventListener("click", onDiscardVoice);
+  if ($("btnTranscribe")) $("btnTranscribe").addEventListener("click", onTranscribeVoice);
+  if ($("voiceTextArea")) $("voiceTextArea").addEventListener("input", (e) => { state.voiceText = e.target.value; });
+  if ($("btnAnalyzeVoice")) $("btnAnalyzeVoice").addEventListener("click", onAnalyzeVoiceText);
+
+  if ($("btnBack")) $("btnBack").addEventListener("click", () => { state.screen = "input"; state.result = null; render(); });
+  if ($("btnDetails")) $("btnDetails").addEventListener("click", () => { state.screen = "detail"; render(); window.scrollTo(0, 0); });
+  if ($("btnShareQuick")) $("btnShareQuick").addEventListener("click", onShare);
+  if ($("btnBackResult")) $("btnBackResult").addEventListener("click", () => { state.screen = "result"; render(); window.scrollTo(0, 0); });
+  if ($("btnShare")) $("btnShare").addEventListener("click", onShare);
+  if ($("btnCopy")) $("btnCopy").addEventListener("click", doCopy);
+
+  if ($("voiceName")) $("voiceName").addEventListener("input", (e) => { state.voiceForm.name = e.target.value; });
+  if ($("voiceBody")) $("voiceBody").addEventListener("input", (e) => { state.voiceForm.body = e.target.value; });
+  if ($("btnSubmitVoice")) $("btnSubmitVoice").addEventListener("click", onSubmitVoice);
+  if ($("btnVoicesViewAll")) $("btnVoicesViewAll").addEventListener("click", () => { state.learnView = "wall"; state.voiceJustShared = false; render(); window.scrollTo(0, 0); });
+  if ($("btnVoicesBack")) $("btnVoicesBack").addEventListener("click", () => { state.learnView = "main"; render(); window.scrollTo(0, 0); });
+
+  if ($("btnQr")) $("btnQr").addEventListener("click", () => { state.qrOpen = true; render(); });
+  if ($("btnQrClose")) $("btnQrClose").addEventListener("click", () => { state.qrOpen = false; render(); });
+  if ($("qrModal")) $("qrModal").addEventListener("click", () => { state.qrOpen = false; render(); });
+  if ($("qrCard")) $("qrCard").addEventListener("click", (e) => e.stopPropagation());
+  if ($("qrCanvas")) drawQr($("qrCanvas"));
+}
+
+function syncTextButton() { const btn = document.getElementById("btnAnalyze"); const empty = !state.text.trim(); if (btn) { btn.disabled = empty || state.analyzing; btn.style.opacity = (empty || state.analyzing) ? 0.45 : 1; } }
+function syncLinkButton() { const btn = document.getElementById("btnCheckLink"); const empty = !state.linkUrl.trim(); if (btn) { btn.disabled = empty || state.linkFetching; btn.style.opacity = (empty || state.linkFetching) ? 0.45 : 1; } }
+
+render();
+</script>
+</body>
+</html>
